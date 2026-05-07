@@ -1,4 +1,5 @@
 # Codex WhatsApp Plugin
+<img width="948" height="836" alt="image" src="https://github.com/user-attachments/assets/4518df42-b8f5-4e7b-a2a3-941c7307b36b" />
 
 > Platform note: this plugin currently targets macOS only. Windows setup and
 > Windows background-service support are intentionally out of scope for now.
