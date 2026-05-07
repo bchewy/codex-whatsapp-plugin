@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title">
+  <title>Unofficial chat bridge icon</title>
+  <rect width="256" height="256" rx="48" fill="#2563EB"/>
+  <path d="M70 72h116c20 0 36 16 36 36v30c0 20-16 36-36 36h-43l-42 30v-30H70c-20 0-36-16-36-36v-30c0-20 16-36 36-36Z" fill="#F8FAFC"/>
+  <path d="M86 112h84M86 140h54" stroke="#2563EB" stroke-width="16" stroke-linecap="round"/>
+</svg>

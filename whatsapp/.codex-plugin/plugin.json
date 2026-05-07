@@ -1,0 +1,31 @@
+{
+  "name": "whatsapp",
+  "version": "0.1.0",
+  "description": "Use WhatsApp from Codex through an unofficial lharries/whatsapp-mcp bridge wrapper.",
+  "author": {
+    "name": "Brian Chew"
+  },
+  "homepage": "https://github.com/lharries/whatsapp-mcp",
+  "repository": "https://github.com/lharries/whatsapp-mcp",
+  "license": "MIT",
+  "keywords": ["whatsapp", "mcp", "messaging"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Unofficial WhatsApp Bridge",
+    "shortDescription": "Third-party bridge for a personal WhatsApp account",
+    "longDescription": "Connect your personal WhatsApp account through an unofficial local linked-device bridge so Codex can search chats, read messages, download media, and send messages after explicit confirmation.",
+    "developerName": "Brian Chew",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "websiteURL": "https://github.com/lharries/whatsapp-mcp",
+    "defaultPrompt": [
+      "Summarize my recent WhatsApp chats",
+      "Find WhatsApp messages from Alice about the launch",
+      "Draft a WhatsApp reply after I confirm the recipient"
+    ],
+    "brandColor": "#2563EB",
+    "composerIcon": "./assets/icon.svg",
+    "logo": "./assets/icon.svg"
+  }
+}

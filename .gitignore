@@ -1,0 +1,20 @@
+# Runtime state and private WhatsApp data.
+whatsapp/vendor/whatsapp-mcp/whatsapp-bridge/store/
+*.db
+*.db-shm
+*.db-wal
+
+# Python and Go build artifacts.
+.venv/
+__pycache__/
+*.py[cod]
+bin/
+dist/
+build/
+
+# Logs and temp files.
+*.log
+*.tmp
+*.ogg.tmp
+.DS_Store
+.playwright-mcp/
