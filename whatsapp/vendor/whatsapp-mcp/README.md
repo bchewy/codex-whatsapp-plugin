@@ -11,6 +11,26 @@ fork to avoid shipping chat-like UI captures.
 
 > *Caution:* as with many MCP servers, the WhatsApp MCP is subject to [the lethal trifecta](https://simonwillison.net/2025/Jun/16/the-lethal-trifecta/). This means that project injection could lead to private data exfiltration.
 
+## Why MCP Instead Of A CLI?
+
+CLI projects such as [`wacli`](https://wacli.sh/) are a good fit for terminal
+users and scripts: `wacli` is a single Go binary that pairs as a linked
+WhatsApp Web device, syncs messages into local SQLite/FTS5, and provides
+scriptable search, send, media, contact, chat, group, diagnostic, JSON,
+read-only, and store-locking workflows.
+
+This project keeps the MCP shape because it is designed for AI clients such as
+Claude, Cursor, and Codex. MCP exposes WhatsApp as named tools with structured
+inputs and outputs, so the client can discover capabilities, pass contacts,
+message IDs, chat JIDs, and media paths without shell parsing, and show
+sensitive send actions as explicit tool calls. In this packaged fork, send
+tools also require `confirm_send=true` after the exact recipient and content
+are confirmed.
+
+Use a CLI when the user wants a human terminal or shell automation surface. Use
+MCP when the user wants an agent-native WhatsApp capability with local state,
+structured calls, and clearer read/write boundaries.
+
 ## Installation
 
 ### Prerequisites

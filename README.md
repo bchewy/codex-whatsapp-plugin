@@ -12,6 +12,33 @@ This project is not affiliated with, endorsed by, or sponsored by WhatsApp,
 Meta, or their affiliates. WhatsApp is a trademark of its respective owner, and
 this project does not include or claim rights in WhatsApp brand assets.
 
+## Why MCP Instead Of A CLI?
+
+[`wacli`](https://wacli.sh/) is a strong terminal-first option. It ships as a
+single Go binary, pairs as a linked WhatsApp Web device, syncs messages into a
+local SQLite/FTS5 store, and exposes search, send, media, contacts, chats,
+groups, diagnostics, `--json`, `--events`, `--read-only`, and store-locking
+workflows for scripts and humans. If your main workflow is shell scripting,
+cron, or direct terminal use, a CLI may be the better fit.
+
+This plugin chooses MCP because the primary user is an AI agent inside Codex:
+
+- Codex discovers named WhatsApp tools with schemas instead of learning command
+  strings, flags, shell quoting, and output parsing rules.
+- Contacts, chat JIDs, messages, media paths, and send parameters move through
+  structured tool arguments and results.
+- Write actions have an explicit tool boundary: the send tools require
+  `confirm_send=true` after the exact recipient and content are confirmed.
+- The Codex plugin manifest, MCP entry, skill, health checks, setup scripts,
+  and macOS background service install as one local integration.
+- WhatsApp auth, indexed messages, downloaded media, and the bridge token stay
+  in the local private store; data reaches the model only through tool results
+  returned for the user's request.
+
+In short: this is not MCP because CLIs are bad. It is MCP because WhatsApp in
+Codex should feel like a typed local capability with explicit write gates, not
+a shell subprocess the agent has to rediscover on every prompt.
+
 ## macOS Quick Start
 
 This is the recommended path for a first-time macOS setup.
