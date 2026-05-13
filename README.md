@@ -1,3 +1,5 @@
+![Codex WhatsApp plugin screenshot](whatsapp/assets/codex-whatsapp-plugin-screenshot.png)
+
 # Codex WhatsApp Plugin
 <img width="948" height="836" alt="image" src="https://github.com/user-attachments/assets/4518df42-b8f5-4e7b-a2a3-941c7307b36b" />
 
@@ -254,11 +256,19 @@ The bundled upstream MCP server exposes:
 - `send_message`
 - `send_file`
 - `send_audio_message`
+- `create_group`
+- `add_group_participants`
+- `add_or_invite_group_participants`
 - `download_media`
 
 Use read-only tools first to confirm contacts, chat JIDs, and message context.
 For sends, confirm the final recipient and content before calling send tools.
 The send tools also require `confirm_send=true` as an explicit final step.
+For group creation, confirm the exact group name and participant list; the tool
+requires `confirm_create=true`. For group participant adds, confirm the exact
+group JID and participant list; the tool requires `confirm_add=true`. For
+fallback invite DMs after failed adds, also confirm the fallback message and set
+`confirm_invite_message=true`.
 
 ## Reset Auth Or Message State
 

@@ -1,6 +1,6 @@
 ---
 name: whatsapp
-description: Use when the user wants Codex to search WhatsApp chats, read WhatsApp messages, inspect contacts, download WhatsApp media, or send WhatsApp messages/media through this plugin.
+description: Use when the user wants Codex to search WhatsApp chats, read WhatsApp messages, inspect contacts, download WhatsApp media, send WhatsApp messages/media, create WhatsApp groups, or add participants to WhatsApp groups through this plugin.
 version: 0.1.0
 ---
 
@@ -63,6 +63,15 @@ For sends:
 - Confirm the exact recipient and message/media path before using `send_message`, `send_file`, or `send_audio_message`; set `confirm_send=true` only after that confirmation.
 - For group sends, use the group JID ending in `@g.us`.
 - For voice messages, prefer `.ogg` Opus. If the file is not `.ogg`, `ffmpeg` must be installed or the tool may fail.
+
+For group participant changes:
+
+- Use `list_chats`, `get_chat`, or prior context to verify the exact group JID ending in `@g.us`.
+- Use `search_contacts` first when participant phone numbers/JIDs are ambiguous.
+- Confirm the exact group name and participant list before using `create_group`; set `confirm_create=true` only after that confirmation.
+- Confirm the exact group JID and participant list before using `add_group_participants`; set `confirm_add=true` only after that confirmation.
+- To invite people when direct adds fail, use `add_or_invite_group_participants`. Set `confirm_add=true` only after confirming the exact group and participants. Set `confirm_invite_message=true` only after confirming fallback DMs should be sent.
+- If WhatsApp rejects a direct add because of permissions or privacy settings, ask the user to use or share a group invite link instead.
 
 ## Privacy And Failure Modes
 

@@ -258,6 +258,338 @@ type SendMessageRequest struct {
 	MediaPath string `json:"media_path,omitempty"`
 }
 
+type GroupParticipantResult struct {
+	JID          string `json:"jid"`
+	PhoneNumber  string `json:"phone_number,omitempty"`
+	LID          string `json:"lid,omitempty"`
+	IsAdmin      bool   `json:"is_admin"`
+	IsSuperAdmin bool   `json:"is_super_admin"`
+	DisplayName  string `json:"display_name,omitempty"`
+	Error        int    `json:"error,omitempty"`
+}
+
+type AddGroupParticipantsRequest struct {
+	GroupJID     string   `json:"group_jid"`
+	Participants []string `json:"participants"`
+}
+
+type AddGroupParticipantsResponse struct {
+	Success      bool                     `json:"success"`
+	Message      string                   `json:"message"`
+	Participants []GroupParticipantResult `json:"participants,omitempty"`
+}
+
+type RemoveGroupParticipantsRequest struct {
+	GroupJID     string   `json:"group_jid"`
+	Participants []string `json:"participants"`
+}
+
+type RemoveGroupParticipantsResponse struct {
+	Success      bool                     `json:"success"`
+	Message      string                   `json:"message"`
+	Participants []GroupParticipantResult `json:"participants,omitempty"`
+}
+
+type LeaveGroupRequest struct {
+	GroupJID string `json:"group_jid"`
+}
+
+type LeaveGroupResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
+type GroupInfoRequest struct {
+	GroupJID string `json:"group_jid"`
+}
+
+type GroupInfoResponse struct {
+	Success          bool                     `json:"success"`
+	Message          string                   `json:"message"`
+	GroupJID         string                   `json:"group_jid,omitempty"`
+	Name             string                   `json:"name,omitempty"`
+	MemberAddMode    string                   `json:"member_add_mode,omitempty"`
+	ParticipantCount int                      `json:"participant_count,omitempty"`
+	OwnParticipant   *GroupParticipantResult  `json:"own_participant,omitempty"`
+	Participants     []GroupParticipantResult `json:"participants,omitempty"`
+}
+
+type GroupInviteLinkRequest struct {
+	GroupJID string `json:"group_jid"`
+	Reset    bool   `json:"reset,omitempty"`
+}
+
+type GroupInviteLinkResponse struct {
+	Success    bool   `json:"success"`
+	Message    string `json:"message"`
+	InviteLink string `json:"invite_link,omitempty"`
+}
+
+type CreateGroupRequest struct {
+	Name         string   `json:"name"`
+	Participants []string `json:"participants"`
+}
+
+type CreateGroupResponse struct {
+	Success      bool                     `json:"success"`
+	Message      string                   `json:"message"`
+	GroupJID     string                   `json:"group_jid,omitempty"`
+	Participants []GroupParticipantResult `json:"participants,omitempty"`
+}
+
+func parseUserJID(ref string) (types.JID, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return types.JID{}, fmt.Errorf("participant cannot be empty")
+	}
+	if strings.Contains(ref, "@") {
+		return types.ParseJID(ref)
+	}
+	return types.JID{
+		User:   ref,
+		Server: types.DefaultUserServer,
+	}, nil
+}
+
+func participantResult(participant types.GroupParticipant) GroupParticipantResult {
+	result := GroupParticipantResult{
+		JID:          participant.JID.String(),
+		IsAdmin:      participant.IsAdmin,
+		IsSuperAdmin: participant.IsSuperAdmin,
+		DisplayName:  participant.DisplayName,
+		Error:        participant.Error,
+	}
+	if !participant.PhoneNumber.IsEmpty() {
+		result.PhoneNumber = participant.PhoneNumber.String()
+	}
+	if !participant.LID.IsEmpty() {
+		result.LID = participant.LID.String()
+	}
+	return result
+}
+
+func parseParticipantRefs(participantRefs []string) ([]types.JID, error) {
+	if len(participantRefs) == 0 {
+		return nil, fmt.Errorf("at least one participant must be provided")
+	}
+
+	participants := make([]types.JID, 0, len(participantRefs))
+	for _, ref := range participantRefs {
+		participant, err := parseUserJID(ref)
+		if err != nil {
+			return nil, fmt.Errorf("error parsing participant %q: %v", ref, err)
+		}
+		if participant.Server != types.DefaultUserServer && participant.Server != types.HiddenUserServer {
+			return nil, fmt.Errorf("participant %q must be a user JID or phone number", ref)
+		}
+		participants = append(participants, participant)
+	}
+	return participants, nil
+}
+
+func createGroup(client *whatsmeow.Client, name string, participantRefs []string) (bool, string, string, []GroupParticipantResult) {
+	if !client.IsConnected() {
+		return false, "Not connected to WhatsApp", "", nil
+	}
+
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false, "Group name must be provided", "", nil
+	}
+	if len([]rune(name)) > 25 {
+		return false, "Group names are limited to 25 characters", "", nil
+	}
+
+	participants, err := parseParticipantRefs(participantRefs)
+	if err != nil {
+		return false, err.Error(), "", nil
+	}
+
+	info, err := client.CreateGroup(context.Background(), whatsmeow.ReqCreateGroup{
+		Name:         name,
+		Participants: participants,
+	})
+	if err != nil {
+		return false, fmt.Sprintf("Failed to create group: %v", err), "", nil
+	}
+
+	results := make([]GroupParticipantResult, len(info.Participants))
+	hasParticipantError := false
+	for i, participant := range info.Participants {
+		results[i] = participantResult(participant)
+		if participant.Error != 0 {
+			hasParticipantError = true
+		}
+	}
+
+	if hasParticipantError {
+		return false, "WhatsApp created the group but returned participant-level errors", info.JID.String(), results
+	}
+	return true, "Group created successfully", info.JID.String(), results
+}
+
+func addGroupParticipants(client *whatsmeow.Client, groupJID string, participantRefs []string) (bool, string, []GroupParticipantResult) {
+	if !client.IsConnected() {
+		return false, "Not connected to WhatsApp", nil
+	}
+
+	group, err := types.ParseJID(strings.TrimSpace(groupJID))
+	if err != nil {
+		return false, fmt.Sprintf("Error parsing group JID: %v", err), nil
+	}
+	if group.Server != types.GroupServer {
+		return false, "group_jid must be a WhatsApp group JID ending in @g.us", nil
+	}
+	if len(participantRefs) == 0 {
+		return false, "At least one participant must be provided", nil
+	}
+
+	participants, err := parseParticipantRefs(participantRefs)
+	if err != nil {
+		return false, err.Error(), nil
+	}
+
+	updated, err := client.UpdateGroupParticipants(context.Background(), group, participants, whatsmeow.ParticipantChangeAdd)
+	if err != nil {
+		return false, fmt.Sprintf("Failed to add group participants: %v", err), nil
+	}
+
+	results := make([]GroupParticipantResult, len(updated))
+	hasParticipantError := false
+	for i, participant := range updated {
+		results[i] = participantResult(participant)
+		if participant.Error != 0 {
+			hasParticipantError = true
+		}
+	}
+
+	if hasParticipantError {
+		return false, "WhatsApp returned participant-level errors while adding one or more users", results
+	}
+	return true, "Group participants added successfully", results
+}
+
+func removeGroupParticipants(client *whatsmeow.Client, groupJID string, participantRefs []string) (bool, string, []GroupParticipantResult) {
+	if !client.IsConnected() {
+		return false, "Not connected to WhatsApp", nil
+	}
+
+	group, err := types.ParseJID(strings.TrimSpace(groupJID))
+	if err != nil {
+		return false, fmt.Sprintf("Error parsing group JID: %v", err), nil
+	}
+	if group.Server != types.GroupServer {
+		return false, "group_jid must be a WhatsApp group JID ending in @g.us", nil
+	}
+
+	participants, err := parseParticipantRefs(participantRefs)
+	if err != nil {
+		return false, err.Error(), nil
+	}
+
+	updated, err := client.UpdateGroupParticipants(context.Background(), group, participants, whatsmeow.ParticipantChangeRemove)
+	if err != nil {
+		return false, fmt.Sprintf("Failed to remove group participants: %v", err), nil
+	}
+
+	results := make([]GroupParticipantResult, len(updated))
+	hasParticipantError := false
+	for i, participant := range updated {
+		results[i] = participantResult(participant)
+		if participant.Error != 0 {
+			hasParticipantError = true
+		}
+	}
+
+	if hasParticipantError {
+		return false, "WhatsApp returned participant-level errors while removing one or more users", results
+	}
+	return true, "Group participants removed successfully", results
+}
+
+func leaveGroup(client *whatsmeow.Client, groupJID string) (bool, string) {
+	if !client.IsConnected() {
+		return false, "Not connected to WhatsApp"
+	}
+
+	group, err := types.ParseJID(strings.TrimSpace(groupJID))
+	if err != nil {
+		return false, fmt.Sprintf("Error parsing group JID: %v", err)
+	}
+	if group.Server != types.GroupServer {
+		return false, "group_jid must be a WhatsApp group JID ending in @g.us"
+	}
+
+	if err := client.LeaveGroup(context.Background(), group); err != nil {
+		return false, fmt.Sprintf("Failed to leave group: %v", err)
+	}
+	return true, "Left group successfully"
+}
+
+func getGroupInfo(client *whatsmeow.Client, groupJID string) (bool, string, *types.GroupInfo) {
+	if !client.IsConnected() {
+		return false, "Not connected to WhatsApp", nil
+	}
+
+	group, err := types.ParseJID(strings.TrimSpace(groupJID))
+	if err != nil {
+		return false, fmt.Sprintf("Error parsing group JID: %v", err), nil
+	}
+	if group.Server != types.GroupServer {
+		return false, "group_jid must be a WhatsApp group JID ending in @g.us", nil
+	}
+
+	info, err := client.GetGroupInfo(context.Background(), group)
+	if err != nil {
+		return false, fmt.Sprintf("Failed to get group info: %v", err), nil
+	}
+	return true, "Group info retrieved successfully", info
+}
+
+func getGroupInviteLink(client *whatsmeow.Client, groupJID string, reset bool) (bool, string, string) {
+	if !client.IsConnected() {
+		return false, "Not connected to WhatsApp", ""
+	}
+
+	group, err := types.ParseJID(strings.TrimSpace(groupJID))
+	if err != nil {
+		return false, fmt.Sprintf("Error parsing group JID: %v", err), ""
+	}
+	if group.Server != types.GroupServer {
+		return false, "group_jid must be a WhatsApp group JID ending in @g.us", ""
+	}
+
+	inviteLink, err := client.GetGroupInviteLink(context.Background(), group, reset)
+	if err != nil {
+		return false, fmt.Sprintf("Failed to get group invite link: %v", err), ""
+	}
+	return true, "Group invite link retrieved successfully", inviteLink
+}
+
+func findOwnParticipant(client *whatsmeow.Client, participants []types.GroupParticipant) *GroupParticipantResult {
+	if client.Store == nil {
+		return nil
+	}
+
+	var ids []types.JID
+	if client.Store.ID != nil && !client.Store.ID.IsEmpty() {
+		ids = append(ids, *client.Store.ID)
+	}
+	if !client.Store.LID.IsEmpty() {
+		ids = append(ids, client.Store.LID)
+	}
+
+	for _, participant := range participants {
+		for _, id := range ids {
+			if participant.JID == id || participant.PhoneNumber == id || participant.LID == id {
+				result := participantResult(participant)
+				return &result
+			}
+		}
+	}
+	return nil
+}
+
 // Function to send a WhatsApp message
 func sendWhatsAppMessage(client *whatsmeow.Client, recipient string, message string, mediaPath string) (bool, string) {
 	if !client.IsConnected() {
@@ -880,6 +1212,238 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 			Message:  fmt.Sprintf("Successfully downloaded %s media", mediaType),
 			Filename: filename,
 			Path:     path,
+		})
+	})
+
+	mux.HandleFunc("/api/groups/participants/add", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !authorizeBridgeRequest(w, r, token) {
+			return
+		}
+
+		var req AddGroupParticipantsRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+			http.Error(w, "Invalid request format", http.StatusBadRequest)
+			return
+		}
+
+		if req.GroupJID == "" {
+			http.Error(w, "Group JID is required", http.StatusBadRequest)
+			return
+		}
+		if len(req.Participants) == 0 {
+			http.Error(w, "At least one participant is required", http.StatusBadRequest)
+			return
+		}
+
+		fmt.Printf("Received group participant add request: group=%s count=%d\n", req.GroupJID, len(req.Participants))
+		success, message, participants := addGroupParticipants(client, req.GroupJID, req.Participants)
+		fmt.Println("Group participant add request completed", success)
+
+		w.Header().Set("Content-Type", "application/json")
+		if !success {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		json.NewEncoder(w).Encode(AddGroupParticipantsResponse{
+			Success:      success,
+			Message:      message,
+			Participants: participants,
+		})
+	})
+
+	mux.HandleFunc("/api/groups/create", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !authorizeBridgeRequest(w, r, token) {
+			return
+		}
+
+		var req CreateGroupRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+			http.Error(w, "Invalid request format", http.StatusBadRequest)
+			return
+		}
+
+		if strings.TrimSpace(req.Name) == "" {
+			http.Error(w, "Group name is required", http.StatusBadRequest)
+			return
+		}
+		if len(req.Participants) == 0 {
+			http.Error(w, "At least one participant is required", http.StatusBadRequest)
+			return
+		}
+
+		fmt.Printf("Received group create request: name=%q count=%d\n", req.Name, len(req.Participants))
+		success, message, groupJID, participants := createGroup(client, req.Name, req.Participants)
+		fmt.Println("Group create request completed", success)
+
+		w.Header().Set("Content-Type", "application/json")
+		if !success {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		json.NewEncoder(w).Encode(CreateGroupResponse{
+			Success:      success,
+			Message:      message,
+			GroupJID:     groupJID,
+			Participants: participants,
+		})
+	})
+
+	mux.HandleFunc("/api/groups/participants/remove", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !authorizeBridgeRequest(w, r, token) {
+			return
+		}
+
+		var req RemoveGroupParticipantsRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+			http.Error(w, "Invalid request format", http.StatusBadRequest)
+			return
+		}
+
+		if req.GroupJID == "" {
+			http.Error(w, "Group JID is required", http.StatusBadRequest)
+			return
+		}
+		if len(req.Participants) == 0 {
+			http.Error(w, "At least one participant is required", http.StatusBadRequest)
+			return
+		}
+
+		fmt.Printf("Received group participant remove request: group=%s count=%d\n", req.GroupJID, len(req.Participants))
+		success, message, participants := removeGroupParticipants(client, req.GroupJID, req.Participants)
+		fmt.Println("Group participant remove request completed", success)
+
+		w.Header().Set("Content-Type", "application/json")
+		if !success {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		json.NewEncoder(w).Encode(RemoveGroupParticipantsResponse{
+			Success:      success,
+			Message:      message,
+			Participants: participants,
+		})
+	})
+
+	mux.HandleFunc("/api/groups/leave", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !authorizeBridgeRequest(w, r, token) {
+			return
+		}
+
+		var req LeaveGroupRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+			http.Error(w, "Invalid request format", http.StatusBadRequest)
+			return
+		}
+
+		if req.GroupJID == "" {
+			http.Error(w, "Group JID is required", http.StatusBadRequest)
+			return
+		}
+
+		fmt.Printf("Received group leave request: group=%s\n", req.GroupJID)
+		success, message := leaveGroup(client, req.GroupJID)
+		fmt.Println("Group leave request completed", success)
+
+		w.Header().Set("Content-Type", "application/json")
+		if !success {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		json.NewEncoder(w).Encode(LeaveGroupResponse{
+			Success: success,
+			Message: message,
+		})
+	})
+
+	mux.HandleFunc("/api/groups/info", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !authorizeBridgeRequest(w, r, token) {
+			return
+		}
+
+		var req GroupInfoRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+			http.Error(w, "Invalid request format", http.StatusBadRequest)
+			return
+		}
+
+		if req.GroupJID == "" {
+			http.Error(w, "Group JID is required", http.StatusBadRequest)
+			return
+		}
+
+		success, message, info := getGroupInfo(client, req.GroupJID)
+		w.Header().Set("Content-Type", "application/json")
+		if !success {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(GroupInfoResponse{
+				Success: success,
+				Message: message,
+			})
+			return
+		}
+
+		participants := make([]GroupParticipantResult, len(info.Participants))
+		for i, participant := range info.Participants {
+			participants[i] = participantResult(participant)
+		}
+
+		json.NewEncoder(w).Encode(GroupInfoResponse{
+			Success:          success,
+			Message:          message,
+			GroupJID:         info.JID.String(),
+			Name:             info.Name,
+			MemberAddMode:    string(info.MemberAddMode),
+			ParticipantCount: info.ParticipantCount,
+			OwnParticipant:   findOwnParticipant(client, info.Participants),
+			Participants:     participants,
+		})
+	})
+
+	mux.HandleFunc("/api/groups/invite-link", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !authorizeBridgeRequest(w, r, token) {
+			return
+		}
+
+		var req GroupInviteLinkRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+			http.Error(w, "Invalid request format", http.StatusBadRequest)
+			return
+		}
+
+		if req.GroupJID == "" {
+			http.Error(w, "Group JID is required", http.StatusBadRequest)
+			return
+		}
+
+		success, message, inviteLink := getGroupInviteLink(client, req.GroupJID, req.Reset)
+		w.Header().Set("Content-Type", "application/json")
+		if !success {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		json.NewEncoder(w).Encode(GroupInviteLinkResponse{
+			Success:    success,
+			Message:    message,
+			InviteLink: inviteLink,
 		})
 	})
 

@@ -12,6 +12,9 @@ from whatsapp import (
     send_message as whatsapp_send_message,
     send_file as whatsapp_send_file,
     send_audio_message as whatsapp_audio_voice_message,
+    add_group_participants as whatsapp_add_group_participants,
+    get_group_invite_link as whatsapp_get_group_invite_link,
+    create_group as whatsapp_create_group,
     download_media as whatsapp_download_media
 )
 
@@ -240,6 +243,217 @@ def send_audio_message(recipient: str, media_path: str, confirm_send: bool = Fal
     return {
         "success": success,
         "message": status_message
+    }
+
+@mcp.tool()
+def add_group_participants(
+    group_jid: str,
+    participants: List[str],
+    confirm_add: bool = False
+) -> Dict[str, Any]:
+    """Add participants to a WhatsApp group.
+
+    This is an externally visible group-admin action. Only use it after the user
+    explicitly confirms the exact group JID and participant phone numbers/JIDs.
+
+    Args:
+        group_jid: The WhatsApp group JID, e.g. "123456789@g.us"
+        participants: Phone numbers with country code and no + or symbols, or user JIDs
+        confirm_add: Must be true only after explicit confirmation of the exact group and participants
+
+    Returns:
+        A dictionary containing success status, a status message, and participant-level results when available
+    """
+    if not group_jid:
+        return {
+            "success": False,
+            "message": "Group JID must be provided"
+        }
+
+    if not participants:
+        return {
+            "success": False,
+            "message": "At least one participant must be provided"
+        }
+
+    if not confirm_add:
+        return {
+            "success": False,
+            "message": "Refusing to add group participants without confirm_add=true after explicit user confirmation"
+        }
+
+    success, status_message, participant_results = whatsapp_add_group_participants(group_jid, participants)
+    return {
+        "success": success,
+        "message": status_message,
+        "participants": participant_results
+    }
+
+def _participant_recipient(participant: Dict[str, Any], fallback: str) -> str:
+    return participant.get("phone_number") or participant.get("jid") or fallback
+
+def _failed_participant_refs(
+    requested_participants: List[str],
+    participant_results: List[Dict[str, Any]]
+) -> List[str]:
+    if participant_results:
+        failed = []
+        for index, participant in enumerate(participant_results):
+            if participant.get("error"):
+                fallback = requested_participants[index] if index < len(requested_participants) else ""
+                failed.append(_participant_recipient(participant, fallback))
+        return failed
+    return requested_participants
+
+def _build_invite_message(template: Optional[str], invite_link: str) -> str:
+    if template:
+        if "{invite_link}" in template:
+            return template.replace("{invite_link}", invite_link)
+        return f"{template.rstrip()}\n\n{invite_link}"
+    return f"I couldn't add you directly to the WhatsApp group, so here's the invite link: {invite_link}"
+
+@mcp.tool()
+def add_or_invite_group_participants(
+    group_jid: str,
+    participants: List[str],
+    invite_message: Optional[str] = None,
+    confirm_add: bool = False,
+    confirm_invite_message: bool = False
+) -> Dict[str, Any]:
+    """Add participants to a WhatsApp group, then DM an invite link to failed adds.
+
+    Direct group adds and fallback DMs are externally visible actions. Only set
+    confirm_add=true after the user confirms the exact group and participant
+    list. Only set confirm_invite_message=true after the user confirms fallback
+    DMs should be sent if any direct adds fail.
+
+    Args:
+        group_jid: The WhatsApp group JID, e.g. "123456789@g.us"
+        participants: Phone numbers with country code and no + or symbols, or user JIDs
+        invite_message: Optional DM text. Use {invite_link} to control where the link appears.
+        confirm_add: Must be true only after explicit confirmation of the exact group and participants
+        confirm_invite_message: Must be true only after explicit confirmation to send fallback invite DMs
+
+    Returns:
+        A dictionary containing direct-add status and invite fallback status
+    """
+    if not group_jid:
+        return {
+            "success": False,
+            "message": "Group JID must be provided"
+        }
+
+    if not participants:
+        return {
+            "success": False,
+            "message": "At least one participant must be provided"
+        }
+
+    if not confirm_add:
+        return {
+            "success": False,
+            "message": "Refusing to add group participants without confirm_add=true after explicit user confirmation"
+        }
+
+    add_success, add_message, participant_results = whatsapp_add_group_participants(group_jid, participants)
+    if add_success:
+        return {
+            "success": True,
+            "message": add_message,
+            "add_success": True,
+            "participants": participant_results,
+            "invites_sent": []
+        }
+
+    failed_recipients = _failed_participant_refs(participants, participant_results)
+    if not confirm_invite_message:
+        return {
+            "success": False,
+            "message": f"{add_message}; fallback invite DMs were not sent because confirm_invite_message is false",
+            "add_success": False,
+            "participants": participant_results,
+            "failed_recipients": failed_recipients,
+            "needs_invite_confirmation": True
+        }
+
+    invite_success, invite_status, invite_link = whatsapp_get_group_invite_link(group_jid)
+    if not invite_success or not invite_link:
+        return {
+            "success": False,
+            "message": f"{add_message}; failed to get group invite link: {invite_status}",
+            "add_success": False,
+            "participants": participant_results,
+            "failed_recipients": failed_recipients,
+            "invites_sent": []
+        }
+
+    message = _build_invite_message(invite_message, invite_link)
+    invites_sent = []
+    invite_failures = []
+    for recipient in failed_recipients:
+        send_success, send_status = whatsapp_send_message(recipient, message)
+        item = {
+            "recipient": recipient,
+            "success": send_success,
+            "message": send_status
+        }
+        invites_sent.append(item)
+        if not send_success:
+            invite_failures.append(item)
+
+    return {
+        "success": len(invite_failures) == 0,
+        "message": "Direct add failed; fallback invite messages processed",
+        "add_success": False,
+        "participants": participant_results,
+        "failed_recipients": failed_recipients,
+        "invite_link": invite_link,
+        "invites_sent": invites_sent
+    }
+
+@mcp.tool()
+def create_group(
+    name: str,
+    participants: List[str],
+    confirm_create: bool = False
+) -> Dict[str, Any]:
+    """Create a WhatsApp group with the given participants.
+
+    This is an externally visible action. Only use it after the user explicitly
+    confirms the exact group name and participant phone numbers/JIDs.
+
+    Args:
+        name: WhatsApp group name. WhatsApp currently limits names to 25 characters.
+        participants: Phone numbers with country code and no + or symbols, or user JIDs
+        confirm_create: Must be true only after explicit confirmation of the exact group and participants
+
+    Returns:
+        A dictionary containing success status, a status message, the new group JID, and participant-level results when available
+    """
+    if not name:
+        return {
+            "success": False,
+            "message": "Group name must be provided"
+        }
+
+    if not participants:
+        return {
+            "success": False,
+            "message": "At least one participant must be provided"
+        }
+
+    if not confirm_create:
+        return {
+            "success": False,
+            "message": "Refusing to create group without confirm_create=true after explicit user confirmation"
+        }
+
+    success, status_message, group_jid, participant_results = whatsapp_create_group(name, participants)
+    return {
+        "success": success,
+        "message": status_message,
+        "group_jid": group_jid,
+        "participants": participant_results
     }
 
 @mcp.tool()

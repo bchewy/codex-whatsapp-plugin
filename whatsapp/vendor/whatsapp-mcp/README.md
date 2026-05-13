@@ -157,6 +157,9 @@ Claude can access the following tools to interact with WhatsApp:
 - **send_message**: Send a WhatsApp message to a specified phone number or group JID
 - **send_file**: Send a file (image, video, raw audio, document) to a specified recipient
 - **send_audio_message**: Send an audio file as a WhatsApp voice message (requires the file to be an .ogg opus file or ffmpeg must be installed)
+- **create_group**: Create a WhatsApp group with specified participants after explicit confirmation
+- **add_group_participants**: Add phone numbers or user JIDs to a WhatsApp group after explicit confirmation
+- **add_or_invite_group_participants**: Add participants, then send fallback invite-link DMs to failed adds after explicit confirmation
 - **download_media**: Download media from a WhatsApp message and get the local file path
 
 ### Media Handling Features
