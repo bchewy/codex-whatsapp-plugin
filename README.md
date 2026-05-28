@@ -248,6 +248,9 @@ The bundled upstream MCP server exposes:
 - `search_contacts`
 - `list_messages`
 - `list_chats`
+- `list_events`
+- `backfill_events`
+- `list_desktop_events`
 - `get_chat`
 - `get_direct_chat_by_contact`
 - `get_contact_chats`
@@ -259,10 +262,20 @@ The bundled upstream MCP server exposes:
 - `create_group`
 - `add_group_participants`
 - `add_or_invite_group_participants`
+- `get_group_invite_link`
 - `download_media`
 
 Use read-only tools first to confirm contacts, chat JIDs, and message context.
+`list_events` returns event cards captured by the bridge. If older event cards
+are missing, use `backfill_events` to request on-demand history sync for the
+chat, then run `list_events` again. On macOS, if an event appears in WhatsApp
+Desktop's group info event drawer but is still missing from the bridge index,
+open that drawer and use `list_desktop_events` to read the visible Desktop
+event rows via accessibility.
 For sends, confirm the final recipient and content before calling send tools.
+For group participant changes, prefer invite links for raw phone numbers. Direct
+adds by raw phone number may be rejected by WhatsApp with participant-level 403
+errors, and that path has been observed to log out linked devices.
 The send tools also require `confirm_send=true` as an explicit final step.
 For group creation, confirm the exact group name and participant list; the tool
 requires `confirm_create=true`. For group participant adds, confirm the exact

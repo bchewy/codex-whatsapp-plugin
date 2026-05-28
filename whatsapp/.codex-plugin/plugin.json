@@ -1,6 +1,6 @@
 {
   "name": "whatsapp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Use WhatsApp from Codex through an unofficial lharries/whatsapp-mcp bridge wrapper.",
   "author": {
     "name": "Brian Chew"
@@ -12,7 +12,7 @@
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",
   "interface": {
-    "displayName": "Unofficial WhatsApp Bridge",
+    "displayName": "WhatsApp",
     "shortDescription": "Third-party bridge for a personal WhatsApp account",
     "longDescription": "Connect your personal WhatsApp account through an unofficial local linked-device bridge so Codex can search chats, read messages, download media, and send messages after explicit confirmation.",
     "developerName": "Brian Chew",

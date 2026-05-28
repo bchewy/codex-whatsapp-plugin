@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"reflect"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"syscall"
@@ -32,6 +33,7 @@ import (
 	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
 func debugContentLoggingEnabled() bool {
@@ -95,6 +97,29 @@ type Message struct {
 	Filename  string
 }
 
+type EventInfo struct {
+	Name               string
+	Description        string
+	LocationName       string
+	LocationAddress    string
+	Latitude           *float64
+	Longitude          *float64
+	JoinLink           string
+	StartTime          int64
+	EndTime            int64
+	IsCanceled         bool
+	ExtraGuestsAllowed bool
+	IsScheduleCall     bool
+	HasReminder        bool
+	ReminderOffsetSec  int64
+}
+
+type HistoryAnchor struct {
+	ID        string
+	Timestamp time.Time
+	IsFromMe  bool
+}
+
 // Database handler for storing message history
 type MessageStore struct {
 	db *sql.DB
@@ -140,6 +165,30 @@ func NewMessageStore() (*MessageStore, error) {
 			PRIMARY KEY (id, chat_jid),
 			FOREIGN KEY (chat_jid) REFERENCES chats(jid)
 		);
+
+		CREATE TABLE IF NOT EXISTS events (
+			id TEXT,
+			chat_jid TEXT,
+			sender TEXT,
+			timestamp TIMESTAMP,
+			is_from_me BOOLEAN,
+			name TEXT,
+			description TEXT,
+			location_name TEXT,
+			location_address TEXT,
+			latitude REAL,
+			longitude REAL,
+			join_link TEXT,
+			start_time INTEGER,
+			end_time INTEGER,
+			is_canceled BOOLEAN,
+			extra_guests_allowed BOOLEAN,
+			is_schedule_call BOOLEAN,
+			has_reminder BOOLEAN,
+			reminder_offset_sec INTEGER,
+			PRIMARY KEY (id, chat_jid),
+			FOREIGN KEY (chat_jid) REFERENCES chats(jid)
+		);
 	`)
 	if err != nil {
 		db.Close()
@@ -178,6 +227,44 @@ func (store *MessageStore) StoreMessage(id, chatJID, sender, content string, tim
 		id, chatJID, sender, content, timestamp, isFromMe, mediaType, filename, url, mediaKey, fileSHA256, fileEncSHA256, fileLength,
 	)
 	return err
+}
+
+func (store *MessageStore) StoreEvent(id, chatJID, sender string, timestamp time.Time, isFromMe bool, event EventInfo) error {
+	var latitude, longitude interface{}
+	if event.Latitude != nil {
+		latitude = *event.Latitude
+	}
+	if event.Longitude != nil {
+		longitude = *event.Longitude
+	}
+
+	_, err := store.db.Exec(
+		`INSERT OR REPLACE INTO events
+		(id, chat_jid, sender, timestamp, is_from_me, name, description, location_name, location_address, latitude, longitude, join_link, start_time, end_time, is_canceled, extra_guests_allowed, is_schedule_call, has_reminder, reminder_offset_sec)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, chatJID, sender, timestamp, isFromMe, event.Name, event.Description, event.LocationName, event.LocationAddress, latitude, longitude, event.JoinLink, event.StartTime, event.EndTime, event.IsCanceled, event.ExtraGuestsAllowed, event.IsScheduleCall, event.HasReminder, event.ReminderOffsetSec,
+	)
+	return err
+}
+
+func (store *MessageStore) GetOldestMessageAnchor(chatJID string) (*HistoryAnchor, error) {
+	row := store.db.QueryRow(
+		`SELECT id, timestamp, is_from_me
+		FROM messages
+		WHERE chat_jid = ?
+		ORDER BY timestamp ASC
+		LIMIT 1`,
+		chatJID,
+	)
+
+	var anchor HistoryAnchor
+	if err := row.Scan(&anchor.ID, &anchor.Timestamp, &anchor.IsFromMe); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &anchor, nil
 }
 
 // Get messages from a chat
@@ -245,10 +332,69 @@ func extractTextContent(msg *waProto.Message) string {
 	return ""
 }
 
+func describeMessageShape(msg *waProto.Message) string {
+	if msg == nil {
+		return "nil"
+	}
+
+	fields := make([]string, 0, 8)
+	msg.ProtoReflect().Range(func(fd protoreflect.FieldDescriptor, _ protoreflect.Value) bool {
+		fields = append(fields, string(fd.Name()))
+		return true
+	})
+	if len(fields) == 0 {
+		return "empty"
+	}
+
+	details := make([]string, 0, 6)
+	if protocol := msg.GetProtocolMessage(); protocol != nil {
+		details = append(details, fmt.Sprintf("protocol_type=%s", protocol.GetType().String()))
+		if nested := describeMessageShape(protocol.GetEditedMessage()); nested != "nil" {
+			details = append(details, "edited="+nested)
+		}
+	}
+	if ephemeral := msg.GetEphemeralMessage(); ephemeral != nil {
+		details = append(details, "ephemeral_inner="+describeMessageShape(ephemeral.GetMessage()))
+	}
+	if viewOnce := msg.GetViewOnceMessage(); viewOnce != nil {
+		details = append(details, "view_once_inner="+describeMessageShape(viewOnce.GetMessage()))
+	}
+	if viewOnceV2 := msg.GetViewOnceMessageV2(); viewOnceV2 != nil {
+		details = append(details, "view_once_v2_inner="+describeMessageShape(viewOnceV2.GetMessage()))
+	}
+	if docCaption := msg.GetDocumentWithCaptionMessage(); docCaption != nil {
+		details = append(details, "document_caption_inner="+describeMessageShape(docCaption.GetMessage()))
+	}
+	if edited := msg.GetEditedMessage(); edited != nil {
+		details = append(details, "edited_inner="+describeMessageShape(edited.GetMessage()))
+	}
+
+	if len(details) == 0 {
+		return strings.Join(fields, ",")
+	}
+	return strings.Join(fields, ",") + " [" + strings.Join(details, "; ") + "]"
+}
+
 // SendMessageResponse represents the response for the send message API
 type SendMessageResponse struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
+}
+
+type SentMessageInfo struct {
+	ID            string
+	ChatJID       string
+	Sender        string
+	Content       string
+	Timestamp     time.Time
+	IsFromMe      bool
+	MediaType     string
+	Filename      string
+	URL           string
+	MediaKey      []byte
+	FileSHA256    []byte
+	FileEncSHA256 []byte
+	FileLength    uint64
 }
 
 // SendMessageRequest represents the request body for the send message API
@@ -591,9 +737,9 @@ func findOwnParticipant(client *whatsmeow.Client, participants []types.GroupPart
 }
 
 // Function to send a WhatsApp message
-func sendWhatsAppMessage(client *whatsmeow.Client, recipient string, message string, mediaPath string) (bool, string) {
+func sendWhatsAppMessage(client *whatsmeow.Client, recipient string, message string, mediaPath string) (bool, string, *SentMessageInfo) {
 	if !client.IsConnected() {
-		return false, "Not connected to WhatsApp"
+		return false, "Not connected to WhatsApp", nil
 	}
 
 	// Create JID for recipient
@@ -607,7 +753,7 @@ func sendWhatsAppMessage(client *whatsmeow.Client, recipient string, message str
 		// Parse the JID string
 		recipientJID, err = types.ParseJID(recipient)
 		if err != nil {
-			return false, fmt.Sprintf("Error parsing JID: %v", err)
+			return false, fmt.Sprintf("Error parsing JID: %v", err), nil
 		}
 	} else {
 		// Create JID from phone number
@@ -624,7 +770,7 @@ func sendWhatsAppMessage(client *whatsmeow.Client, recipient string, message str
 		// Read media file
 		mediaData, err := os.ReadFile(mediaPath)
 		if err != nil {
-			return false, fmt.Sprintf("Error reading media file: %v", err)
+			return false, fmt.Sprintf("Error reading media file: %v", err), nil
 		}
 
 		// Determine media type and mime type based on file extension
@@ -673,7 +819,7 @@ func sendWhatsAppMessage(client *whatsmeow.Client, recipient string, message str
 		// Upload media to WhatsApp servers
 		resp, err := client.Upload(context.Background(), mediaData, mediaType)
 		if err != nil {
-			return false, fmt.Sprintf("Error uploading media: %v", err)
+			return false, fmt.Sprintf("Error uploading media: %v", err), nil
 		}
 
 		if debugContentLoggingEnabled() {
@@ -707,7 +853,7 @@ func sendWhatsAppMessage(client *whatsmeow.Client, recipient string, message str
 					seconds = analyzedSeconds
 					waveform = analyzedWaveform
 				} else {
-					return false, fmt.Sprintf("Failed to analyze Ogg Opus file: %v", err)
+					return false, fmt.Sprintf("Failed to analyze Ogg Opus file: %v", err), nil
 				}
 			} else {
 				fmt.Printf("Not an Ogg Opus file: %s\n", mimeType)
@@ -754,13 +900,38 @@ func sendWhatsAppMessage(client *whatsmeow.Client, recipient string, message str
 	}
 
 	// Send message
-	_, err = client.SendMessage(context.Background(), recipientJID, msg)
+	resp, err := client.SendMessage(context.Background(), recipientJID, msg)
 
 	if err != nil {
-		return false, fmt.Sprintf("Error sending message: %v", err)
+		return false, fmt.Sprintf("Error sending message: %v", err), nil
 	}
 
-	return true, fmt.Sprintf("Message sent to %s", recipient)
+	timestamp := resp.Timestamp
+	if timestamp.IsZero() {
+		timestamp = time.Now()
+	}
+
+	sender := "me"
+	if client.Store != nil && client.Store.ID != nil {
+		sender = client.Store.ID.User
+	}
+
+	mediaType, filename, url, mediaKey, fileSHA256, fileEncSHA256, fileLength := extractMediaInfo(msg)
+	return true, fmt.Sprintf("Message sent to %s", recipient), &SentMessageInfo{
+		ID:            string(resp.ID),
+		ChatJID:       recipientJID.String(),
+		Sender:        sender,
+		Content:       message,
+		Timestamp:     timestamp,
+		IsFromMe:      true,
+		MediaType:     mediaType,
+		Filename:      filename,
+		URL:           url,
+		MediaKey:      mediaKey,
+		FileSHA256:    fileSHA256,
+		FileEncSHA256: fileEncSHA256,
+		FileLength:    fileLength,
+	}
 }
 
 // Extract media info from a message
@@ -800,6 +971,63 @@ func extractMediaInfo(msg *waProto.Message) (mediaType string, filename string, 
 	return "", "", "", nil, nil, nil, 0
 }
 
+func extractEventInfo(msg *waProto.Message) (EventInfo, bool) {
+	if msg == nil {
+		return EventInfo{}, false
+	}
+
+	event := msg.GetEventMessage()
+	if event != nil {
+		info := EventInfo{
+			Name:               event.GetName(),
+			Description:        event.GetDescription(),
+			JoinLink:           event.GetJoinLink(),
+			StartTime:          event.GetStartTime(),
+			EndTime:            event.GetEndTime(),
+			IsCanceled:         event.GetIsCanceled(),
+			ExtraGuestsAllowed: event.GetExtraGuestsAllowed(),
+			IsScheduleCall:     event.GetIsScheduleCall(),
+			HasReminder:        event.GetHasReminder(),
+			ReminderOffsetSec:  event.GetReminderOffsetSec(),
+		}
+
+		if location := event.GetLocation(); location != nil {
+			info.LocationName = location.GetName()
+			info.LocationAddress = location.GetAddress()
+			if location.DegreesLatitude != nil {
+				lat := location.GetDegreesLatitude()
+				info.Latitude = &lat
+			}
+			if location.DegreesLongitude != nil {
+				lon := location.GetDegreesLongitude()
+				info.Longitude = &lon
+			}
+		}
+
+		return info, true
+	}
+
+	invite := msg.GetEventInviteMessage()
+	if invite == nil {
+		return EventInfo{}, false
+	}
+
+	info := EventInfo{
+		Name:        invite.GetEventTitle(),
+		Description: invite.GetCaption(),
+		StartTime:   invite.GetStartTime(),
+		IsCanceled:  invite.GetIsCanceled(),
+	}
+	if info.Name == "" && invite.GetEventID() != "" {
+		info.Name = invite.GetEventID()
+	}
+	if info.Description == "" && invite.GetEventID() != "" {
+		info.Description = "event_id: " + invite.GetEventID()
+	}
+
+	return info, true
+}
+
 // Handle regular incoming messages with media support
 func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *events.Message, logger waLog.Logger) {
 	// Save message to database
@@ -820,6 +1048,20 @@ func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *ev
 
 	// Extract media info
 	mediaType, filename, url, mediaKey, fileSHA256, fileEncSHA256, fileLength := extractMediaInfo(msg.Message)
+
+	if event, ok := extractEventInfo(msg.Message); ok {
+		err = messageStore.StoreEvent(
+			msg.Info.ID,
+			chatJID,
+			sender,
+			msg.Info.Timestamp,
+			msg.Info.IsFromMe,
+			event,
+		)
+		if err != nil {
+			logger.Warnf("Failed to store event: %v", err)
+		}
+	}
 
 	// Skip if there's no content and no media
 	if content == "" && mediaType == "" {
@@ -880,6 +1122,17 @@ type DownloadMediaResponse struct {
 	Message  string `json:"message"`
 	Filename string `json:"filename,omitempty"`
 	Path     string `json:"path,omitempty"`
+}
+
+type BackfillEventsRequest struct {
+	ChatJID string `json:"chat_jid"`
+	Count   int    `json:"count,omitempty"`
+}
+
+type BackfillEventsResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+	Count   int    `json:"count,omitempty"`
 }
 
 // Store additional media info in the database
@@ -1063,6 +1316,58 @@ func downloadMedia(client *whatsmeow.Client, messageStore *MessageStore, message
 	return true, mediaType, filename, absPath, nil
 }
 
+func backfillEvents(client *whatsmeow.Client, messageStore *MessageStore, chatJID string, count int) (bool, string, int) {
+	if client == nil {
+		return false, "Client is not initialized", 0
+	}
+	if !client.IsConnected() {
+		return false, "Client is not connected to WhatsApp", 0
+	}
+	if client.Store == nil || client.Store.ID == nil {
+		return false, "Client is not logged in", 0
+	}
+	if count <= 0 {
+		count = 50
+	}
+	if count > 200 {
+		count = 200
+	}
+
+	chat, err := types.ParseJID(strings.TrimSpace(chatJID))
+	if err != nil {
+		return false, fmt.Sprintf("Error parsing chat JID: %v", err), 0
+	}
+
+	anchor, err := messageStore.GetOldestMessageAnchor(chat.String())
+	if err != nil {
+		return false, fmt.Sprintf("Failed to find history anchor: %v", err), 0
+	}
+	if anchor == nil {
+		return false, "No cached messages found for chat; open or sync the chat first so a history anchor exists", 0
+	}
+
+	info := &types.MessageInfo{
+		MessageSource: types.MessageSource{
+			Chat:     chat,
+			IsFromMe: anchor.IsFromMe,
+			IsGroup:  chat.Server == types.GroupServer,
+		},
+		ID:        anchor.ID,
+		Timestamp: anchor.Timestamp,
+	}
+
+	historyMsg := client.BuildHistorySyncRequest(info, count)
+	if historyMsg == nil {
+		return false, "Failed to build history sync request", 0
+	}
+
+	if _, err := client.SendPeerMessage(context.Background(), historyMsg); err != nil {
+		return false, fmt.Sprintf("Failed to request on-demand history sync: %v", err), 0
+	}
+
+	return true, "Requested on-demand history sync. New event cards will be stored if WhatsApp returns them in history sync.", count
+}
+
 // Extract direct path from a WhatsApp media URL
 func extractDirectPathFromURL(url string) string {
 	// The direct path is typically in the URL, we need to extract it
@@ -1140,11 +1445,49 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 		}
 
 		// Send the message
-		success, message := sendWhatsAppMessage(client, req.Recipient, req.Message, req.MediaPath)
+		success, message, sent := sendWhatsAppMessage(client, req.Recipient, req.Message, req.MediaPath)
 		if debugContentLoggingEnabled() {
 			fmt.Println("Message sent", success, message)
 		} else {
 			fmt.Println("Send request completed", success)
+		}
+		if success && sent != nil {
+			err := messageStore.StoreMessage(
+				sent.ID,
+				sent.ChatJID,
+				sent.Sender,
+				sent.Content,
+				sent.Timestamp,
+				sent.IsFromMe,
+				sent.MediaType,
+				sent.Filename,
+				sent.URL,
+				sent.MediaKey,
+				sent.FileSHA256,
+				sent.FileEncSHA256,
+				sent.FileLength,
+			)
+			if err != nil && strings.Contains(err.Error(), "FOREIGN KEY") {
+				_ = messageStore.StoreChat(sent.ChatJID, sent.ChatJID, sent.Timestamp)
+				err = messageStore.StoreMessage(
+					sent.ID,
+					sent.ChatJID,
+					sent.Sender,
+					sent.Content,
+					sent.Timestamp,
+					sent.IsFromMe,
+					sent.MediaType,
+					sent.Filename,
+					sent.URL,
+					sent.MediaKey,
+					sent.FileSHA256,
+					sent.FileEncSHA256,
+					sent.FileLength,
+				)
+			}
+			if err != nil {
+				fmt.Printf("Failed to store sent message: %v\n", err)
+			}
 		}
 		// Set response headers
 		w.Header().Set("Content-Type", "application/json")
@@ -1212,6 +1555,40 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 			Message:  fmt.Sprintf("Successfully downloaded %s media", mediaType),
 			Filename: filename,
 			Path:     path,
+		})
+	})
+
+	mux.HandleFunc("/api/events/backfill", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !authorizeBridgeRequest(w, r, token) {
+			return
+		}
+
+		var req BackfillEventsRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+			http.Error(w, "Invalid request format", http.StatusBadRequest)
+			return
+		}
+		if strings.TrimSpace(req.ChatJID) == "" {
+			http.Error(w, "Chat JID is required", http.StatusBadRequest)
+			return
+		}
+
+		fmt.Printf("Received event backfill request: chat=%s count=%d\n", req.ChatJID, req.Count)
+		success, message, count := backfillEvents(client, messageStore, req.ChatJID, req.Count)
+		fmt.Println("Event backfill request completed", success)
+
+		w.Header().Set("Content-Type", "application/json")
+		if !success {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		json.NewEncoder(w).Encode(BackfillEventsResponse{
+			Success: success,
+			Message: message,
+			Count:   count,
 		})
 	})
 
@@ -1518,6 +1895,12 @@ func main() {
 
 	// Setup event handling for messages and history sync
 	client.AddEventHandler(func(evt interface{}) {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				logger.Warnf("Recovered from WhatsApp event handler panic: %v\n%s", recovered, debug.Stack())
+			}
+		}()
+
 		switch v := evt.(type) {
 		case *events.Message:
 			// Process regular messages
@@ -1531,7 +1914,7 @@ func main() {
 			logger.Infof("Connected to WhatsApp")
 
 		case *events.LoggedOut:
-			logger.Warnf("Device logged out, please scan QR code to log in again")
+			logger.Warnf("Device logged out by WhatsApp (on_connect=%t, reason=%s). Please scan QR code to log in again", v.OnConnect, v.Reason.String())
 		}
 	})
 
@@ -1744,6 +2127,7 @@ func handleHistorySync(client *whatsmeow.Client, messageStore *MessageStore, his
 
 		// Process messages
 		messages := conversation.Messages
+		logger.Infof("History sync conversation metadata: chat=%s messages=%d", chatJID, len(messages))
 		if len(messages) > 0 {
 			// Update chat with latest message timestamp
 			latestMsg := messages[0]
@@ -1786,14 +2170,21 @@ func handleHistorySync(client *whatsmeow.Client, messageStore *MessageStore, his
 					mediaType, filename, url, mediaKey, fileSHA256, fileEncSHA256, fileLength = extractMediaInfo(msg.Message.Message)
 				}
 
+				event, hasEvent := extractEventInfo(msg.Message.Message)
+
+				messageShape := describeMessageShape(msg.Message.Message)
+				msgID := ""
+				if msg.Message.Key != nil && msg.Message.Key.ID != nil {
+					msgID = *msg.Message.Key.ID
+				}
 				if debugContentLoggingEnabled() {
-					logger.Infof("Message content: %v, Media Type: %v", content, mediaType)
+					logger.Infof("Message content: id=%s content=%v, Media Type: %v, Has Event: %t, shape=%s", msgID, content, mediaType, hasEvent, messageShape)
 				} else {
-					logger.Infof("History message metadata: has_content=%t, media_type=%s", content != "", mediaType)
+					logger.Infof("History message metadata: id=%s has_content=%t, media_type=%s, has_event=%t, shape=%s", msgID, content != "", mediaType, hasEvent, messageShape)
 				}
 
-				// Skip messages with no content and no media
-				if content == "" && mediaType == "" {
+				// Skip messages with no content, media, or event card.
+				if content == "" && mediaType == "" && !hasEvent {
 					continue
 				}
 
@@ -1807,18 +2198,16 @@ func handleHistorySync(client *whatsmeow.Client, messageStore *MessageStore, his
 					if !isFromMe && msg.Message.Key.Participant != nil && *msg.Message.Key.Participant != "" {
 						sender = *msg.Message.Key.Participant
 					} else if isFromMe {
-						sender = client.Store.ID.User
+						if client.Store != nil && client.Store.ID != nil {
+							sender = client.Store.ID.User
+						} else {
+							sender = "me"
+						}
 					} else {
 						sender = jid.User
 					}
 				} else {
 					sender = jid.User
-				}
-
-				// Store message
-				msgID := ""
-				if msg.Message.Key != nil && msg.Message.Key.ID != nil {
-					msgID = *msg.Message.Key.ID
 				}
 
 				// Get message timestamp
@@ -1829,36 +2218,47 @@ func handleHistorySync(client *whatsmeow.Client, messageStore *MessageStore, his
 					continue
 				}
 
-				err = messageStore.StoreMessage(
-					msgID,
-					chatJID,
-					sender,
-					content,
-					timestamp,
-					isFromMe,
-					mediaType,
-					filename,
-					url,
-					mediaKey,
-					fileSHA256,
-					fileEncSHA256,
-					fileLength,
-				)
-				if err != nil {
-					logger.Warnf("Failed to store history message: %v", err)
-				} else {
-					syncedCount++
-					if debugContentLoggingEnabled() {
-						if mediaType != "" {
-							logger.Infof("Stored message: [%s] %s -> %s: [%s: %s] %s",
-								timestamp.Format("2006-01-02 15:04:05"), sender, chatJID, mediaType, filename, content)
-						} else {
-							logger.Infof("Stored message: [%s] %s -> %s: %s",
-								timestamp.Format("2006-01-02 15:04:05"), sender, chatJID, content)
-						}
+				if hasEvent {
+					err = messageStore.StoreEvent(msgID, chatJID, sender, timestamp, isFromMe, event)
+					if err != nil {
+						logger.Warnf("Failed to store history event: %v", err)
 					} else {
-						logger.Infof("Stored message metadata: [%s] has_content=%t, media_type=%s",
-							timestamp.Format("2006-01-02 15:04:05"), content != "", mediaType)
+						syncedCount++
+					}
+				}
+
+				if content != "" || mediaType != "" {
+					err = messageStore.StoreMessage(
+						msgID,
+						chatJID,
+						sender,
+						content,
+						timestamp,
+						isFromMe,
+						mediaType,
+						filename,
+						url,
+						mediaKey,
+						fileSHA256,
+						fileEncSHA256,
+						fileLength,
+					)
+					if err != nil {
+						logger.Warnf("Failed to store history message: %v", err)
+					} else {
+						syncedCount++
+						if debugContentLoggingEnabled() {
+							if mediaType != "" {
+								logger.Infof("Stored message: [%s] %s -> %s: [%s: %s] %s",
+									timestamp.Format("2006-01-02 15:04:05"), sender, chatJID, mediaType, filename, content)
+							} else {
+								logger.Infof("Stored message: [%s] %s -> %s: %s",
+									timestamp.Format("2006-01-02 15:04:05"), sender, chatJID, content)
+							}
+						} else {
+							logger.Infof("Stored message metadata: [%s] has_content=%t, media_type=%s",
+								timestamp.Format("2006-01-02 15:04:05"), content != "", mediaType)
+						}
 					}
 				}
 			}

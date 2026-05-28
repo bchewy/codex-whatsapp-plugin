@@ -148,6 +148,9 @@ Claude can access the following tools to interact with WhatsApp:
 
 - **search_contacts**: Search for contacts by name or phone number
 - **list_messages**: Retrieve messages with optional filters and context
+- **list_events**: Retrieve native WhatsApp event cards captured by the bridge
+- **backfill_events**: Request on-demand chat history sync so older WhatsApp event cards can be indexed
+- **list_desktop_events**: macOS fallback that reads the currently open WhatsApp Desktop group event drawer via accessibility
 - **list_chats**: List available chats with metadata
 - **get_chat**: Get information about a specific chat
 - **get_direct_chat_by_contact**: Find a direct chat with a specific contact
@@ -158,8 +161,9 @@ Claude can access the following tools to interact with WhatsApp:
 - **send_file**: Send a file (image, video, raw audio, document) to a specified recipient
 - **send_audio_message**: Send an audio file as a WhatsApp voice message (requires the file to be an .ogg opus file or ffmpeg must be installed)
 - **create_group**: Create a WhatsApp group with specified participants after explicit confirmation
-- **add_group_participants**: Add phone numbers or user JIDs to a WhatsApp group after explicit confirmation
-- **add_or_invite_group_participants**: Add participants, then send fallback invite-link DMs to failed adds after explicit confirmation
+- **add_group_participants**: Add user JIDs to a WhatsApp group after explicit confirmation; raw phone numbers require an extra risk confirmation because participant-level 403 errors can log out linked devices
+- **add_or_invite_group_participants**: Add participants, then send fallback invite-link DMs to failed adds after explicit confirmation; raw phone numbers default to manual invite-link sharing
+- **get_group_invite_link**: Get or rotate a group invite link after explicit confirmation
 - **download_media**: Download media from a WhatsApp message and get the local file path
 
 ### Media Handling Features

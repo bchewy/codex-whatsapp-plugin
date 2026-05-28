@@ -1,5 +1,8 @@
 import os
+import platform
+import re
 import sqlite3
+import subprocess
 import sys
 from datetime import datetime
 from dataclasses import dataclass
@@ -72,6 +75,29 @@ class Message:
     id: str
     chat_name: Optional[str] = None
     media_type: Optional[str] = None
+
+@dataclass
+class WhatsAppEvent:
+    timestamp: datetime
+    sender: str
+    is_from_me: bool
+    chat_jid: str
+    id: str
+    name: str
+    description: Optional[str] = None
+    chat_name: Optional[str] = None
+    location_name: Optional[str] = None
+    location_address: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    join_link: Optional[str] = None
+    start_time: Optional[int] = None
+    end_time: Optional[int] = None
+    is_canceled: bool = False
+    extra_guests_allowed: bool = False
+    is_schedule_call: bool = False
+    has_reminder: bool = False
+    reminder_offset_sec: Optional[int] = None
 
 @dataclass
 class Chat:
@@ -172,6 +198,356 @@ def format_messages_list(messages: List[Message], show_chat_info: bool = True) -
     for message in messages:
         output += format_message(message, show_chat_info)
     return output
+
+def _format_event_time(raw_time: Optional[int]) -> str:
+    if not raw_time:
+        return ""
+
+    try:
+        timestamp = raw_time / 1000 if raw_time > 10_000_000_000 else raw_time
+        return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
+    except (OSError, OverflowError, ValueError):
+        return str(raw_time)
+
+def format_event(event: WhatsAppEvent, show_chat_info: bool = True) -> str:
+    output = ""
+    if show_chat_info and event.chat_name:
+        output += f"[{event.timestamp:%Y-%m-%d %H:%M:%S}] Chat: {event.chat_name} "
+    else:
+        output += f"[{event.timestamp:%Y-%m-%d %H:%M:%S}] "
+
+    sender_name = get_sender_name(event.sender) if not event.is_from_me else "Me"
+    status = " canceled" if event.is_canceled else ""
+    output += f"From: {sender_name}: [event{status} - Message ID: {event.id} - Chat JID: {event.chat_jid}] {event.name or '(untitled event)'}"
+
+    details = []
+    start_time = _format_event_time(event.start_time)
+    end_time = _format_event_time(event.end_time)
+    if start_time:
+        details.append(f"start: {start_time}")
+    if end_time:
+        details.append(f"end: {end_time}")
+    if event.description:
+        details.append(f"description: {event.description}")
+    if event.location_name or event.location_address:
+        location = " / ".join(part for part in [event.location_name, event.location_address] if part)
+        details.append(f"location: {location}")
+    if event.latitude is not None and event.longitude is not None:
+        details.append(f"coords: {event.latitude}, {event.longitude}")
+    if event.join_link:
+        details.append(f"join_link: {event.join_link}")
+    if event.has_reminder:
+        details.append(f"reminder_offset_sec: {event.reminder_offset_sec or 0}")
+    if event.extra_guests_allowed:
+        details.append("extra guests allowed")
+    if event.is_schedule_call:
+        details.append("scheduled call")
+
+    if details:
+        output += " | " + " | ".join(details)
+    output += "\n"
+    return output
+
+def format_events_list(events: List[WhatsAppEvent], show_chat_info: bool = True) -> str:
+    if not events:
+        return "No events to display. The bridge event index is empty or no indexed events matched; on macOS, use list_desktop_events while the WhatsApp Desktop group event drawer is open to read drawer-only events."
+
+    output = ""
+    for event in events:
+        output += format_event(event, show_chat_info)
+    return output
+
+def list_events(
+    after: Optional[str] = None,
+    before: Optional[str] = None,
+    chat_jid: Optional[str] = None,
+    query: Optional[str] = None,
+    include_canceled: bool = True,
+    limit: int = 20,
+    page: int = 0
+) -> List[WhatsAppEvent]:
+    """Get native WhatsApp events captured by the bridge."""
+    try:
+        conn = sqlite3.connect(MESSAGES_DB_PATH)
+        cursor = conn.cursor()
+
+        query_parts = ["""
+            SELECT events.timestamp, events.sender, chats.name, events.is_from_me, chats.jid,
+                   events.id, events.name, events.description, events.location_name,
+                   events.location_address, events.latitude, events.longitude, events.join_link,
+                   events.start_time, events.end_time, events.is_canceled,
+                   events.extra_guests_allowed, events.is_schedule_call, events.has_reminder,
+                   events.reminder_offset_sec
+            FROM events
+            JOIN chats ON events.chat_jid = chats.jid
+        """]
+        where_clauses = []
+        params = []
+
+        if after:
+            try:
+                after = datetime.fromisoformat(after)
+            except ValueError:
+                raise ValueError(f"Invalid date format for 'after': {after}. Please use ISO-8601 format.")
+            where_clauses.append("events.timestamp > ?")
+            params.append(after)
+
+        if before:
+            try:
+                before = datetime.fromisoformat(before)
+            except ValueError:
+                raise ValueError(f"Invalid date format for 'before': {before}. Please use ISO-8601 format.")
+            where_clauses.append("events.timestamp < ?")
+            params.append(before)
+
+        if chat_jid:
+            where_clauses.append("events.chat_jid = ?")
+            params.append(chat_jid)
+
+        if query:
+            where_clauses.append("(LOWER(events.name) LIKE LOWER(?) OR LOWER(events.description) LIKE LOWER(?) OR LOWER(events.location_name) LIKE LOWER(?) OR LOWER(events.location_address) LIKE LOWER(?))")
+            params.extend([f"%{query}%"] * 4)
+
+        if not include_canceled:
+            where_clauses.append("events.is_canceled = 0")
+
+        if where_clauses:
+            query_parts.append("WHERE " + " AND ".join(where_clauses))
+
+        offset = page * limit
+        query_parts.append("ORDER BY events.start_time DESC, events.timestamp DESC")
+        query_parts.append("LIMIT ? OFFSET ?")
+        params.extend([limit, offset])
+
+        cursor.execute(" ".join(query_parts), tuple(params))
+        result = []
+        for row in cursor.fetchall():
+            result.append(WhatsAppEvent(
+                timestamp=datetime.fromisoformat(row[0]),
+                sender=row[1],
+                chat_name=row[2],
+                is_from_me=bool(row[3]),
+                chat_jid=row[4],
+                id=row[5],
+                name=row[6] or "",
+                description=row[7],
+                location_name=row[8],
+                location_address=row[9],
+                latitude=row[10],
+                longitude=row[11],
+                join_link=row[12],
+                start_time=row[13],
+                end_time=row[14],
+                is_canceled=bool(row[15]),
+                extra_guests_allowed=bool(row[16]),
+                is_schedule_call=bool(row[17]),
+                has_reminder=bool(row[18]),
+                reminder_offset_sec=row[19]
+            ))
+
+        return format_events_list(result, show_chat_info=True)
+
+    except sqlite3.Error as e:
+        if "no such table: events" in str(e):
+            return "No events to display. Restart the WhatsApp bridge with event support enabled, then wait for new events or history sync."
+        _err(f"Database error: {e}")
+        return []
+    finally:
+        if 'conn' in locals():
+            conn.close()
+
+def _run_osascript(script: str, timeout: int = 8) -> Tuple[bool, str]:
+    try:
+        result = subprocess.run(
+            ["osascript"],
+            input=script,
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+        )
+    except FileNotFoundError:
+        return False, "osascript is not available on this system."
+    except subprocess.TimeoutExpired:
+        return False, "Timed out reading WhatsApp Desktop via macOS accessibility."
+
+    output = (result.stdout or "").strip()
+    error = (result.stderr or "").strip()
+    if result.returncode != 0:
+        return False, error or output or f"osascript exited with status {result.returncode}"
+    return True, output
+
+def _desktop_event_descriptions() -> Tuple[bool, List[str], str]:
+    script = r'''
+on appendLine(accum, valueText)
+    if valueText is "" then return accum
+    if accum is "" then
+        return valueText
+    else
+        return accum & linefeed & valueText
+    end if
+end appendLine
+
+tell application "System Events"
+    if not (exists process "WhatsApp") then return "ERROR: WhatsApp Desktop is not running."
+    tell process "WhatsApp"
+        if (count of windows) is 0 then return "ERROR: WhatsApp Desktop has no open window."
+        set roots to {}
+        try
+            set end of roots to sheet 1 of window 1
+        end try
+        try
+            set end of roots to window 1
+        end try
+
+        set outText to ""
+        repeat with rootItem in roots
+            try
+                repeat with itemRef in (entire contents of rootItem)
+                    set candidate to ""
+                    try
+                        set candidate to description of itemRef as text
+                    end try
+                    if candidate does not contain "EventListCell" then
+                        try
+                            set candidate to value of itemRef as text
+                        end try
+                    end if
+                    if candidate contains "EventListCell" then
+                        set outText to my appendLine(outText, candidate)
+                    end if
+                end repeat
+            end try
+        end repeat
+        return outText
+    end tell
+end tell
+'''
+    ok, output = _run_osascript(script)
+    if not ok:
+        return False, [], output
+    if output.startswith("ERROR:"):
+        return False, [], output
+    rows = [line.strip() for line in output.splitlines() if line.strip()]
+    return True, rows, ""
+
+def _press_whatsapp_key(key_code: int) -> None:
+    script = f'''
+tell application "System Events"
+    if exists process "WhatsApp" then
+        tell process "WhatsApp"
+            set frontmost to true
+            key code {key_code}
+        end tell
+    end if
+end tell
+'''
+    _run_osascript(script, timeout=3)
+
+def _normalize_desktop_event_text(text: str) -> str:
+    text = text.replace("\u200e", "")
+    text = text.replace("\u202f", " ")
+    text = text.replace("\u00a0", " ")
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r",?\s*ID:\s*EventListCell\b", "", text)
+    return text.strip(" ,")
+
+def _format_desktop_event_rows(rows: List[str], source_note: str) -> str:
+    if not rows:
+        return (
+            "No WhatsApp Desktop event rows were visible. Open WhatsApp Desktop, open the target group, "
+            "go to Group Info > Events, then run list_desktop_events again."
+        )
+
+    output = [source_note]
+    for idx, row in enumerate(rows, start=1):
+        output.append(f"{idx}. {_normalize_desktop_event_text(row)}")
+    return "\n".join(output)
+
+def list_desktop_events(
+    query: Optional[str] = None,
+    limit: int = 100,
+    page: int = 0,
+    scroll_pages: int = 12,
+) -> str:
+    """Read visible WhatsApp Desktop group event drawer rows via macOS accessibility."""
+    if platform.system() != "Darwin":
+        return "list_desktop_events is only available on macOS with WhatsApp Desktop."
+
+    ok, initial_rows, error = _desktop_event_descriptions()
+    if not ok:
+        return error
+    if not initial_rows:
+        return _format_desktop_event_rows([], "")
+
+    # Start near the top of the drawer, then page down collecting visible rows.
+    for _ in range(max(1, min(scroll_pages, 30))):
+        _press_whatsapp_key(116)  # Page Up
+
+    seen = {}
+    stable_rounds = 0
+    last_count = 0
+    for _ in range(max(1, min(scroll_pages, 30)) + 1):
+        ok, rows, error = _desktop_event_descriptions()
+        if not ok:
+            return error
+        for row in rows:
+            normalized = _normalize_desktop_event_text(row)
+            if normalized:
+                seen.setdefault(normalized, row)
+
+        if len(seen) == last_count:
+            stable_rounds += 1
+        else:
+            stable_rounds = 0
+            last_count = len(seen)
+        if stable_rounds >= 2:
+            break
+        _press_whatsapp_key(121)  # Page Down
+
+    rows = list(seen.values())
+    if query:
+        needle = query.casefold()
+        rows = [row for row in rows if needle in _normalize_desktop_event_text(row).casefold()]
+
+    offset = max(0, page) * max(1, limit)
+    rows = rows[offset:offset + max(1, limit)]
+    return _format_desktop_event_rows(
+        rows,
+        "WhatsApp Desktop event drawer rows. Source: currently visible Mac WhatsApp UI, not the bridge event index.",
+    )
+
+def backfill_events(chat_jid: str, count: int = 50) -> dict:
+    """Request on-demand WhatsApp history sync for a chat so event cards can be indexed."""
+    try:
+        if not chat_jid:
+            return {"success": False, "message": "chat_jid must be provided"}
+        if count <= 0:
+            count = 50
+        if count > 200:
+            count = 200
+
+        ready, ready_message = _bridge_ready()
+        if not ready:
+            return {"success": False, "message": ready_message}
+
+        response = requests.post(
+            f"{WHATSAPP_API_BASE_URL}/events/backfill",
+            json={"chat_jid": chat_jid, "count": count},
+            headers=_bridge_headers(),
+            timeout=30,
+        )
+        if response.status_code in (200, 500):
+            return response.json()
+        return {
+            "success": False,
+            "message": f"Error: HTTP {response.status_code} - {response.text}",
+        }
+    except requests.RequestException as e:
+        return {"success": False, "message": f"Request error: {str(e)}"}
+    except json.JSONDecodeError:
+        return {"success": False, "message": f"Error parsing response: {response.text}"}
+    except Exception as e:
+        return {"success": False, "message": f"Unexpected error: {str(e)}"}
 
 def list_messages(
     after: Optional[str] = None,

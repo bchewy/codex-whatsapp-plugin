@@ -1,7 +1,7 @@
 {
   "name": "local-codex-whatsapp",
   "interface": {
-    "displayName": "Local Codex WhatsApp"
+    "displayName": "WhatsApp"
   },
   "plugins": [
     {

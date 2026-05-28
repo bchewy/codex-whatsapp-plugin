@@ -1,8 +1,12 @@
+import re
 from typing import List, Dict, Any, Optional
 from mcp.server.fastmcp import FastMCP
 from whatsapp import (
     search_contacts as whatsapp_search_contacts,
     list_messages as whatsapp_list_messages,
+    list_events as whatsapp_list_events,
+    list_desktop_events as whatsapp_list_desktop_events,
+    backfill_events as whatsapp_backfill_events,
     list_chats as whatsapp_list_chats,
     get_chat as whatsapp_get_chat,
     get_direct_chat_by_contact as whatsapp_get_direct_chat_by_contact,
@@ -71,6 +75,81 @@ def list_messages(
         context_after=context_after
     )
     return messages
+
+@mcp.tool()
+def list_events(
+    after: Optional[str] = None,
+    before: Optional[str] = None,
+    chat_jid: Optional[str] = None,
+    query: Optional[str] = None,
+    include_canceled: bool = True,
+    limit: int = 20,
+    page: int = 0
+) -> List[Dict[str, Any]]:
+    """Get native WhatsApp events captured from chats.
+
+    Args:
+        after: Optional ISO-8601 formatted string to only return events after this date
+        before: Optional ISO-8601 formatted string to only return events before this date
+        chat_jid: Optional chat JID to filter events by chat
+        query: Optional search term to filter event name, description, or location
+        include_canceled: Whether to include canceled events (default True)
+        limit: Maximum number of events to return (default 20)
+        page: Page number for pagination (default 0)
+    """
+    events = whatsapp_list_events(
+        after=after,
+        before=before,
+        chat_jid=chat_jid,
+        query=query,
+        include_canceled=include_canceled,
+        limit=limit,
+        page=page
+    )
+    return events
+
+@mcp.tool()
+def list_desktop_events(
+    query: Optional[str] = None,
+    limit: int = 100,
+    page: int = 0,
+    scroll_pages: int = 12
+) -> str:
+    """Read WhatsApp Desktop group event drawer rows via macOS accessibility.
+
+    This is a fallback for events that appear in WhatsApp Desktop's Group Info
+    event drawer but were not captured by the bridge event index. It requires
+    WhatsApp Desktop to be running with the target group's event drawer open.
+
+    Args:
+        query: Optional search term to filter visible drawer rows
+        limit: Maximum number of drawer rows to return
+        page: Page number for pagination
+        scroll_pages: Number of page-down passes to collect from the drawer
+    """
+    return whatsapp_list_desktop_events(
+        query=query,
+        limit=limit,
+        page=page,
+        scroll_pages=scroll_pages
+    )
+
+@mcp.tool()
+def backfill_events(
+    chat_jid: str,
+    count: int = 50
+) -> Dict[str, Any]:
+    """Request on-demand history sync for a chat so older WhatsApp event cards can be indexed.
+
+    This asks the linked primary device for messages before the oldest cached
+    message in the chat. If WhatsApp returns EventMessage or EventInviteMessage
+    payloads, the bridge stores them in the events table for list_events.
+
+    Args:
+        chat_jid: Chat JID to backfill, e.g. a group JID ending in @g.us
+        count: Number of older messages to request before the oldest cached message
+    """
+    return whatsapp_backfill_events(chat_jid=chat_jid, count=count)
 
 @mcp.tool()
 def list_chats(
@@ -249,7 +328,8 @@ def send_audio_message(recipient: str, media_path: str, confirm_send: bool = Fal
 def add_group_participants(
     group_jid: str,
     participants: List[str],
-    confirm_add: bool = False
+    confirm_add: bool = False,
+    confirm_risky_phone_number_add: bool = False
 ) -> Dict[str, Any]:
     """Add participants to a WhatsApp group.
 
@@ -258,8 +338,9 @@ def add_group_participants(
 
     Args:
         group_jid: The WhatsApp group JID, e.g. "123456789@g.us"
-        participants: Phone numbers with country code and no + or symbols, or user JIDs
+        participants: User JIDs, or phone numbers with country code and no + or symbols
         confirm_add: Must be true only after explicit confirmation of the exact group and participants
+        confirm_risky_phone_number_add: Must be true only after explicitly accepting that direct adds by raw phone number may log out the linked device when WhatsApp returns participant-level 403 errors
 
     Returns:
         A dictionary containing success status, a status message, and participant-level results when available
@@ -282,12 +363,30 @@ def add_group_participants(
             "message": "Refusing to add group participants without confirm_add=true after explicit user confirmation"
         }
 
+    raw_phone_numbers = _raw_phone_number_participants(participants)
+    if raw_phone_numbers and not confirm_risky_phone_number_add:
+        return {
+            "success": False,
+            "message": "Refusing direct group adds by raw phone number by default. WhatsApp has been observed to log out linked devices after participant-level 403 errors for this path. Use get_group_invite_link and share the invite manually, or set confirm_risky_phone_number_add=true after explicitly accepting that risk.",
+            "raw_phone_number_participants": raw_phone_numbers,
+            "needs_risk_confirmation": True
+        }
+
     success, status_message, participant_results = whatsapp_add_group_participants(group_jid, participants)
     return {
         "success": success,
         "message": status_message,
         "participants": participant_results
     }
+
+def _is_raw_phone_number(ref: str) -> bool:
+    if not ref or "@" in ref:
+        return False
+    cleaned = re.sub(r"[\s()+-]", "", ref.strip())
+    return cleaned.isdigit()
+
+def _raw_phone_number_participants(participants: List[str]) -> List[str]:
+    return [participant for participant in participants if _is_raw_phone_number(participant)]
 
 def _participant_recipient(participant: Dict[str, Any], fallback: str) -> str:
     return participant.get("phone_number") or participant.get("jid") or fallback
@@ -318,7 +417,9 @@ def add_or_invite_group_participants(
     participants: List[str],
     invite_message: Optional[str] = None,
     confirm_add: bool = False,
-    confirm_invite_message: bool = False
+    confirm_invite_message: bool = False,
+    confirm_risky_phone_number_add: bool = False,
+    confirm_risky_phone_invite_dm: bool = False
 ) -> Dict[str, Any]:
     """Add participants to a WhatsApp group, then DM an invite link to failed adds.
 
@@ -333,6 +434,8 @@ def add_or_invite_group_participants(
         invite_message: Optional DM text. Use {invite_link} to control where the link appears.
         confirm_add: Must be true only after explicit confirmation of the exact group and participants
         confirm_invite_message: Must be true only after explicit confirmation to send fallback invite DMs
+        confirm_risky_phone_number_add: Must be true only after explicitly accepting raw-phone direct-add logout risk
+        confirm_risky_phone_invite_dm: Must be true only after explicitly accepting raw-phone invite-DM logout risk
 
     Returns:
         A dictionary containing direct-add status and invite fallback status
@@ -353,6 +456,19 @@ def add_or_invite_group_participants(
         return {
             "success": False,
             "message": "Refusing to add group participants without confirm_add=true after explicit user confirmation"
+        }
+
+    raw_phone_numbers = _raw_phone_number_participants(participants)
+    if raw_phone_numbers and not confirm_risky_phone_number_add:
+        return {
+            "success": False,
+            "message": "Skipped direct group adds by raw phone number because WhatsApp has been observed to log out linked devices after participant-level 403 errors for this path. Use get_group_invite_link and share the invite manually, or set confirm_risky_phone_number_add=true after explicitly accepting that risk.",
+            "add_success": False,
+            "participants": [],
+            "failed_recipients": raw_phone_numbers,
+            "needs_risk_confirmation": True,
+            "needs_manual_invite": True,
+            "needs_invite_link": True
         }
 
     add_success, add_message, participant_results = whatsapp_add_group_participants(group_jid, participants)
@@ -387,6 +503,20 @@ def add_or_invite_group_participants(
             "invites_sent": []
         }
 
+    raw_failed_recipients = _raw_phone_number_participants(failed_recipients)
+    if raw_failed_recipients and not confirm_risky_phone_invite_dm:
+        return {
+            "success": False,
+            "message": "Direct add failed and the invite link was retrieved, but fallback DMs to raw phone numbers were not sent because that path can also force WhatsApp user-info lookups and has been observed to log out the linked device. Share the invite link manually, or set confirm_risky_phone_invite_dm=true after explicitly accepting that risk.",
+            "add_success": False,
+            "participants": participant_results,
+            "failed_recipients": failed_recipients,
+            "invite_link": invite_link,
+            "invites_sent": [],
+            "needs_risk_confirmation": True,
+            "needs_manual_invite": True
+        }
+
     message = _build_invite_message(invite_message, invite_link)
     invites_sent = []
     invite_failures = []
@@ -409,6 +539,54 @@ def add_or_invite_group_participants(
         "failed_recipients": failed_recipients,
         "invite_link": invite_link,
         "invites_sent": invites_sent
+    }
+
+@mcp.tool()
+def get_group_invite_link(
+    group_jid: str,
+    reset: bool = False,
+    confirm_get: bool = False,
+    confirm_reset: bool = False
+) -> Dict[str, Any]:
+    """Get a WhatsApp group invite link.
+
+    Invite links are sensitive because anyone with the link may be able to join.
+    Only set confirm_get=true after confirming the exact group. Only set
+    reset=true with confirm_reset=true after the user explicitly confirms link
+    rotation, because resetting invalidates the previous invite link.
+
+    Args:
+        group_jid: The WhatsApp group JID, e.g. "123456789@g.us"
+        reset: Whether to rotate the group's invite link
+        confirm_get: Must be true only after explicit confirmation of the exact group
+        confirm_reset: Must be true only after explicit confirmation to rotate the link
+
+    Returns:
+        A dictionary containing success status, a status message, and the invite link
+    """
+    if not group_jid:
+        return {
+            "success": False,
+            "message": "Group JID must be provided"
+        }
+
+    if not confirm_get:
+        return {
+            "success": False,
+            "message": "Refusing to get group invite link without confirm_get=true after explicit user confirmation"
+        }
+
+    if reset and not confirm_reset:
+        return {
+            "success": False,
+            "message": "Refusing to reset group invite link without confirm_reset=true after explicit user confirmation"
+        }
+
+    success, status_message, invite_link = whatsapp_get_group_invite_link(group_jid, reset=reset)
+    return {
+        "success": success,
+        "message": status_message,
+        "invite_link": invite_link
     }
 
 @mcp.tool()
