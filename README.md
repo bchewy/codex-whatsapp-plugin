@@ -12,7 +12,8 @@ messages or files through your personal WhatsApp linked-device session.
 
 This project is not affiliated with, endorsed by, or sponsored by WhatsApp,
 Meta, or their affiliates. WhatsApp is a trademark of its respective owner, and
-this project does not include or claim rights in WhatsApp brand assets.
+this project does not claim ownership of WhatsApp brand assets. The WhatsApp
+logo is displayed only to identify the compatible service.
 
 ## Why MCP Instead Of A CLI?
 
@@ -40,6 +41,65 @@ This plugin chooses MCP because the primary user is an AI agent inside Codex:
 In short: this is not MCP because CLIs are bad. It is MCP because WhatsApp in
 Codex should feel like a typed local capability with explicit write gates, not
 a shell subprocess the agent has to rediscover on every prompt.
+
+## Codex Marketplace Model
+
+A Codex marketplace is a catalog of plugins. Its `interface.displayName` is the
+dropdown label in Codex, while this plugin's `interface.displayName` is the
+installable item shown inside that marketplace.
+
+For a single local selector, keep all local plugin entries in one user-level
+marketplace at `~/.agents/plugins/marketplace.json`. Do not keep a repo-local
+`.agents/plugins/marketplace.json` active for this checkout unless you
+intentionally want Codex to show this repository as a separate marketplace.
+
+This repo's plugin bundle is `whatsapp/`. In the shared `Local Plugins`
+marketplace, the plugin should be installed as:
+
+```bash
+codex plugin add whatsapp@local
+```
+
+The matching Telegram plugin uses the same model: one `Local Plugins`
+marketplace, separate `whatsapp` and `telegram` plugin entries.
+
+For checkouts under `~/dev`, the relevant `plugins` entries look like this.
+Preserve any other plugins already present in your local marketplace file.
+
+```json
+{
+  "name": "local",
+  "interface": {
+    "displayName": "Local Plugins"
+  },
+  "plugins": [
+    {
+      "name": "whatsapp",
+      "source": {
+        "source": "local",
+        "path": "./dev/codex-whatsapp-plugin/whatsapp"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "telegram",
+      "source": {
+        "source": "local",
+        "path": "./dev/codex-telegram-plugin/telegram"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
+```
 
 ## macOS Quick Start
 
@@ -72,14 +132,19 @@ This is the recommended path for a first-time macOS setup.
    `Settings > Linked Devices > Link a Device`. Leave this terminal open while
    you finish setup.
 
-4. Install the local plugin into Codex:
+4. Install the local plugin into Codex from the shared local marketplace:
 
    ```bash
-   codex plugin marketplace add .
+   codex plugin add whatsapp@local
    ```
 
-   Restart Codex, open `/plugins`, choose `Local Codex WhatsApp`, and install
-   `WhatsApp`.
+   If the local marketplace does not include this checkout yet, add a
+   `whatsapp` entry that points at this repo's `whatsapp/` directory, then rerun
+   the command above. Keep the marketplace name as `local` and the display name
+   as `Local Plugins` if you want it grouped with your other local plugins.
+
+   Restart Codex and start a fresh thread after installing. Old threads can miss
+   newly installed plugin, skill, and MCP context.
 
 5. After the first QR pairing works, install the macOS background service so the
    bridge can keep running without a terminal window:
@@ -112,12 +177,13 @@ verify the bridge/service status and summarize what changed.
 
 ## What It Bundles
 
-The repository root is the local marketplace. The actual Codex plugin bundle is
-`whatsapp/`, mirroring the layout used by `codex-telegram-plugin`.
+The actual Codex plugin bundle is `whatsapp/`, mirroring the layout used by
+`codex-telegram-plugin`. Local marketplace registration lives outside this repo
+in `~/.agents/plugins/marketplace.json`.
 
 - `whatsapp/.codex-plugin/plugin.json`: Codex plugin manifest.
 - `whatsapp/.mcp.json`: Codex MCP server entry for WhatsApp.
-- `whatsapp/assets/icon.svg`: neutral third-party chat icon used in the composer and plugin UI.
+- `whatsapp/assets/icon.svg`: WhatsApp logo used in the composer and plugin UI.
 - `whatsapp/skills/whatsapp/SKILL.md`: workflow guidance for Codex.
 - `whatsapp/scripts/`: setup, health, bridge, and reset helpers.
 - `whatsapp/vendor/whatsapp-mcp/`: vendored upstream WhatsApp bridge and MCP server.
@@ -202,14 +268,17 @@ If your linked-device session expires and a new QR code is needed, use
 
 ## Install In Codex
 
-From this repository root:
+After the shared local marketplace includes this checkout:
 
 ```bash
-codex plugin marketplace add .
+codex plugin add whatsapp@local
 ```
 
-Restart Codex, open `/plugins`, choose `Local Codex WhatsApp`, and install
-`WhatsApp`.
+If `whatsapp@local` is not found, add this checkout's `whatsapp/` directory to
+`~/.agents/plugins/marketplace.json` under the existing `local` marketplace,
+then rerun the install command. Do not keep a repo-local
+`.agents/plugins/marketplace.json` active unless you intentionally want a
+separate marketplace entry in the Codex dropdown.
 
 Codex installs local plugins into `~/.codex/plugins/cache/...` and loads the
 installed copy from there. After installing, prefer running helper scripts from

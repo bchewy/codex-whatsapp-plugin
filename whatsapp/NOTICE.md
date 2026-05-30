@@ -14,8 +14,8 @@ The upstream license is preserved at `vendor/whatsapp-mcp/LICENSE`.
 
 This project is an unofficial third-party integration and is not affiliated
 with, endorsed by, or sponsored by WhatsApp, Meta, or their affiliates.
-WhatsApp is a trademark of its respective owner. The plugin uses neutral
-third-party artwork rather than WhatsApp brand assets.
+WhatsApp and the WhatsApp logo are trademarks of their respective owner. The
+plugin displays the WhatsApp logo only to identify the compatible service.
 
 ## Runtime data
 

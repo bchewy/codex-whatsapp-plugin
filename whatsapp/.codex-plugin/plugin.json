@@ -1,6 +1,6 @@
 {
   "name": "whatsapp",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Use WhatsApp from Codex through an unofficial lharries/whatsapp-mcp bridge wrapper.",
   "author": {
     "name": "Brian Chew"
@@ -24,8 +24,9 @@
       "Find WhatsApp messages from Alice about the launch",
       "Draft a WhatsApp reply after I confirm the recipient"
     ],
-    "brandColor": "#2563EB",
+    "brandColor": "#25D366",
     "composerIcon": "./assets/icon.svg",
-    "logo": "./assets/icon.svg"
+    "logo": "./assets/icon.svg",
+    "screenshots": ["./assets/codex-whatsapp-plugin-screenshot.png"]
   }
 }
