@@ -3,7 +3,7 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 plugin_root="$(cd "$script_dir/.." && pwd)"
-bridge_dir="$plugin_root/vendor/whatsapp-mcp/whatsapp-bridge"
+bridge_dir="$plugin_root/build/vendor/whatsapp-mcp/whatsapp-bridge"
 
 if ! command -v go >/dev/null 2>&1; then
   echo "Go is required to run the WhatsApp bridge. Install Go, then rerun this script." >&2

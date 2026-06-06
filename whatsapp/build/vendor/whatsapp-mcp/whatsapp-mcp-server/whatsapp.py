@@ -218,7 +218,11 @@ def format_event(event: WhatsAppEvent, show_chat_info: bool = True) -> str:
 
     sender_name = get_sender_name(event.sender) if not event.is_from_me else "Me"
     status = " canceled" if event.is_canceled else ""
-    output += f"From: {sender_name}: [event{status} - Message ID: {event.id} - Chat JID: {event.chat_jid}] {event.name or '(untitled event)'}"
+    event_name = event.name or "(untitled event)"
+    output += (
+        f"From: {sender_name}: [event{status} - Message ID: {event.id} - "
+        f"Chat JID: {event.chat_jid}] {event_name}"
+    )
 
     details = []
     start_time = _format_event_time(event.start_time)
@@ -250,7 +254,11 @@ def format_event(event: WhatsAppEvent, show_chat_info: bool = True) -> str:
 
 def format_events_list(events: List[WhatsAppEvent], show_chat_info: bool = True) -> str:
     if not events:
-        return "No events to display. The bridge event index is empty or no indexed events matched; on macOS, use list_desktop_events while the WhatsApp Desktop group event drawer is open to read drawer-only events."
+        return (
+            "No events to display. The bridge event index is empty or no indexed "
+            "events matched; on macOS, use list_desktop_events while the WhatsApp "
+            "Desktop group event drawer is open to read drawer-only events."
+        )
 
     output = ""
     for event in events:
@@ -305,7 +313,14 @@ def list_events(
             params.append(chat_jid)
 
         if query:
-            where_clauses.append("(LOWER(events.name) LIKE LOWER(?) OR LOWER(events.description) LIKE LOWER(?) OR LOWER(events.location_name) LIKE LOWER(?) OR LOWER(events.location_address) LIKE LOWER(?))")
+            where_clauses.append("""
+                (
+                    LOWER(events.name) LIKE LOWER(?)
+                    OR LOWER(events.description) LIKE LOWER(?)
+                    OR LOWER(events.location_name) LIKE LOWER(?)
+                    OR LOWER(events.location_address) LIKE LOWER(?)
+                )
+            """)
             params.extend([f"%{query}%"] * 4)
 
         if not include_canceled:
@@ -349,7 +364,10 @@ def list_events(
 
     except sqlite3.Error as e:
         if "no such table: events" in str(e):
-            return "No events to display. Restart the WhatsApp bridge with event support enabled, then wait for new events or history sync."
+            return (
+                "No events to display. Restart the WhatsApp bridge with event "
+                "support enabled, then wait for new events or history sync."
+            )
         _err(f"Database error: {e}")
         return []
     finally:
@@ -567,7 +585,11 @@ def list_messages(
         cursor = conn.cursor()
         
         # Build base query
-        query_parts = ["SELECT messages.timestamp, messages.sender, chats.name, messages.content, messages.is_from_me, chats.jid, messages.id, messages.media_type FROM messages"]
+        query_parts = ["""
+            SELECT messages.timestamp, messages.sender, chats.name, messages.content,
+                   messages.is_from_me, chats.jid, messages.id, messages.media_type
+            FROM messages
+        """]
         query_parts.append("JOIN chats ON messages.chat_jid = chats.jid")
         where_clauses = []
         params = []
@@ -663,7 +685,9 @@ def get_message_context(
         
         # Get the target message first
         cursor.execute("""
-            SELECT messages.timestamp, messages.sender, chats.name, messages.content, messages.is_from_me, chats.jid, messages.id, messages.chat_jid, messages.media_type
+            SELECT messages.timestamp, messages.sender, chats.name, messages.content,
+                   messages.is_from_me, chats.jid, messages.id, messages.chat_jid,
+                   messages.media_type
             FROM messages
             JOIN chats ON messages.chat_jid = chats.jid
             WHERE messages.id = ?
@@ -686,7 +710,8 @@ def get_message_context(
         
         # Get messages before
         cursor.execute("""
-            SELECT messages.timestamp, messages.sender, chats.name, messages.content, messages.is_from_me, chats.jid, messages.id, messages.media_type
+            SELECT messages.timestamp, messages.sender, chats.name, messages.content,
+                   messages.is_from_me, chats.jid, messages.id, messages.media_type
             FROM messages
             JOIN chats ON messages.chat_jid = chats.jid
             WHERE messages.chat_jid = ? AND messages.timestamp < ?
@@ -709,7 +734,8 @@ def get_message_context(
         
         # Get messages after
         cursor.execute("""
-            SELECT messages.timestamp, messages.sender, chats.name, messages.content, messages.is_from_me, chats.jid, messages.id, messages.media_type
+            SELECT messages.timestamp, messages.sender, chats.name, messages.content,
+                   messages.is_from_me, chats.jid, messages.id, messages.media_type
             FROM messages
             JOIN chats ON messages.chat_jid = chats.jid
             WHERE messages.chat_jid = ? AND messages.timestamp > ?
@@ -756,22 +782,37 @@ def list_chats(
         conn = sqlite3.connect(MESSAGES_DB_PATH)
         cursor = conn.cursor()
         
-        # Build base query
-        query_parts = ["""
-            SELECT 
-                chats.jid,
-                chats.name,
-                chats.last_message_time,
+        if include_last_message:
+            last_message_columns = """
                 messages.content as last_message,
                 messages.sender as last_sender,
                 messages.is_from_me as last_is_from_me
+            """
+        else:
+            last_message_columns = """
+                NULL as last_message,
+                NULL as last_sender,
+                NULL as last_is_from_me
+            """
+
+        query_parts = [f"""
+            SELECT
+                chats.jid,
+                chats.name,
+                chats.last_message_time,
+                {last_message_columns}
             FROM chats
         """]
-        
+
         if include_last_message:
             query_parts.append("""
-                LEFT JOIN messages ON chats.jid = messages.chat_jid 
-                AND chats.last_message_time = messages.timestamp
+                LEFT JOIN messages ON messages.id = (
+                    SELECT latest.id
+                    FROM messages AS latest
+                    WHERE latest.chat_jid = chats.jid
+                    ORDER BY latest.timestamp DESC, latest.id DESC
+                    LIMIT 1
+                )
             """)
             
         where_clauses = []
@@ -811,8 +852,8 @@ def list_chats(
         return result
         
     except sqlite3.Error as e:
-        _err(f"Database error: {e}")
-        return []
+        _err(f"Database error while listing chats: {e}")
+        raise
     finally:
         if 'conn' in locals():
             conn.close()

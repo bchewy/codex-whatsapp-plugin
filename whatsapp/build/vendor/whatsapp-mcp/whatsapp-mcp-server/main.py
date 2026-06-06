@@ -25,6 +25,28 @@ from whatsapp import (
 # Initialize FastMCP server
 mcp = FastMCP("whatsapp")
 
+RAW_PHONE_ADD_RISK_MESSAGE = (
+    "Refusing direct group adds by raw phone number by default. WhatsApp has "
+    "been observed to log out linked devices after participant-level 403 errors "
+    "for this path. Use get_group_invite_link and share the invite manually, or "
+    "set confirm_risky_phone_number_add=true after explicitly accepting that risk."
+)
+
+RAW_PHONE_ADD_SKIPPED_MESSAGE = (
+    "Skipped direct group adds by raw phone number because WhatsApp has been "
+    "observed to log out linked devices after participant-level 403 errors for "
+    "this path. Use get_group_invite_link and share the invite manually, or set "
+    "confirm_risky_phone_number_add=true after explicitly accepting that risk."
+)
+
+RAW_PHONE_INVITE_DM_RISK_MESSAGE = (
+    "Direct add failed and the invite link was retrieved, but fallback DMs to "
+    "raw phone numbers were not sent because that path can also force WhatsApp "
+    "user-info lookups and has been observed to log out the linked device. Share "
+    "the invite link manually, or set confirm_risky_phone_invite_dm=true after "
+    "explicitly accepting that risk."
+)
+
 @mcp.tool()
 def search_contacts(query: str) -> List[Dict[str, Any]]:
     """Search WhatsApp contacts by name or phone number.
@@ -275,7 +297,9 @@ def send_message(
 
 @mcp.tool()
 def send_file(recipient: str, media_path: str, confirm_send: bool = False) -> Dict[str, Any]:
-    """Send a file such as a picture, raw audio, video or document via WhatsApp to the specified recipient. For group messages use the JID.
+    """Send a file such as a picture, raw audio, video or document via WhatsApp.
+
+    For group messages use the JID.
     
     Args:
         recipient: The recipient - either a phone number with country code but no + or other symbols,
@@ -301,7 +325,10 @@ def send_file(recipient: str, media_path: str, confirm_send: bool = False) -> Di
 
 @mcp.tool()
 def send_audio_message(recipient: str, media_path: str, confirm_send: bool = False) -> Dict[str, Any]:
-    """Send any audio file as a WhatsApp audio message to the specified recipient. For group messages use the JID. If it errors due to ffmpeg not being installed, use send_file instead.
+    """Send any audio file as a WhatsApp audio message to the specified recipient.
+
+    For group messages use the JID. If conversion errors because ffmpeg is not
+    installed, use send_file instead.
     
     Args:
         recipient: The recipient - either a phone number with country code but no + or other symbols,
@@ -340,7 +367,8 @@ def add_group_participants(
         group_jid: The WhatsApp group JID, e.g. "123456789@g.us"
         participants: User JIDs, or phone numbers with country code and no + or symbols
         confirm_add: Must be true only after explicit confirmation of the exact group and participants
-        confirm_risky_phone_number_add: Must be true only after explicitly accepting that direct adds by raw phone number may log out the linked device when WhatsApp returns participant-level 403 errors
+        confirm_risky_phone_number_add: Must be true only after explicitly accepting
+            raw-phone direct-add logout risk from participant-level 403 errors
 
     Returns:
         A dictionary containing success status, a status message, and participant-level results when available
@@ -367,7 +395,7 @@ def add_group_participants(
     if raw_phone_numbers and not confirm_risky_phone_number_add:
         return {
             "success": False,
-            "message": "Refusing direct group adds by raw phone number by default. WhatsApp has been observed to log out linked devices after participant-level 403 errors for this path. Use get_group_invite_link and share the invite manually, or set confirm_risky_phone_number_add=true after explicitly accepting that risk.",
+            "message": RAW_PHONE_ADD_RISK_MESSAGE,
             "raw_phone_number_participants": raw_phone_numbers,
             "needs_risk_confirmation": True
         }
@@ -462,7 +490,7 @@ def add_or_invite_group_participants(
     if raw_phone_numbers and not confirm_risky_phone_number_add:
         return {
             "success": False,
-            "message": "Skipped direct group adds by raw phone number because WhatsApp has been observed to log out linked devices after participant-level 403 errors for this path. Use get_group_invite_link and share the invite manually, or set confirm_risky_phone_number_add=true after explicitly accepting that risk.",
+            "message": RAW_PHONE_ADD_SKIPPED_MESSAGE,
             "add_success": False,
             "participants": [],
             "failed_recipients": raw_phone_numbers,
@@ -507,7 +535,7 @@ def add_or_invite_group_participants(
     if raw_failed_recipients and not confirm_risky_phone_invite_dm:
         return {
             "success": False,
-            "message": "Direct add failed and the invite link was retrieved, but fallback DMs to raw phone numbers were not sent because that path can also force WhatsApp user-info lookups and has been observed to log out the linked device. Share the invite link manually, or set confirm_risky_phone_invite_dm=true after explicitly accepting that risk.",
+            "message": RAW_PHONE_INVITE_DM_RISK_MESSAGE,
             "add_success": False,
             "participants": participant_results,
             "failed_recipients": failed_recipients,
@@ -606,7 +634,8 @@ def create_group(
         confirm_create: Must be true only after explicit confirmation of the exact group and participants
 
     Returns:
-        A dictionary containing success status, a status message, the new group JID, and participant-level results when available
+        A dictionary containing success status, status message, new group JID,
+        and participant-level results when available
     """
     if not name:
         return {

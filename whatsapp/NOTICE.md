@@ -8,7 +8,7 @@ This plugin vendors `lharries/whatsapp-mcp`.
 - License: MIT
 - Copyright: Copyright (c) 2025 Luke Harries
 
-The upstream license is preserved at `vendor/whatsapp-mcp/LICENSE`.
+The upstream license is preserved at `build/vendor/whatsapp-mcp/LICENSE`.
 
 ## Trademarks
 
@@ -24,5 +24,5 @@ history, and downloaded media under
 `${XDG_DATA_HOME:-$HOME/.local/share}/codex-whatsapp-plugin/store/` by default.
 That directory also contains a local bridge token and is runtime-only; it must
 not be committed, synced, or packaged with sample data. Legacy installs may still have data under
-`vendor/whatsapp-mcp/whatsapp-bridge/store/`; treat both locations as private
+`build/vendor/whatsapp-mcp/whatsapp-bridge/store/`; treat both locations as private
 runtime state.

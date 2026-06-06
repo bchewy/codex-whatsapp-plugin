@@ -3,8 +3,8 @@ set -u
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 plugin_root="$(cd "$script_dir/.." && pwd)"
-bridge_dir="$plugin_root/vendor/whatsapp-mcp/whatsapp-bridge"
-mcp_dir="$plugin_root/vendor/whatsapp-mcp/whatsapp-mcp-server"
+bridge_dir="$plugin_root/build/vendor/whatsapp-mcp/whatsapp-bridge"
+mcp_dir="$plugin_root/build/vendor/whatsapp-mcp/whatsapp-mcp-server"
 uv_cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/codex-whatsapp-plugin"
 WHATSAPP_MCP_STORE_DIR="${WHATSAPP_MCP_STORE_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/codex-whatsapp-plugin/store}"
 WHATSAPP_BRIDGE_PORT="${WHATSAPP_BRIDGE_PORT:-8080}"

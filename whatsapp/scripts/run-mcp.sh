@@ -3,7 +3,7 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 plugin_root="$(cd "$script_dir/.." && pwd)"
-mcp_dir="$plugin_root/vendor/whatsapp-mcp/whatsapp-mcp-server"
+mcp_dir="$plugin_root/build/vendor/whatsapp-mcp/whatsapp-mcp-server"
 uv_cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/codex-whatsapp-plugin"
 
 if ! command -v uv >/dev/null 2>&1; then

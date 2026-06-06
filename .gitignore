@@ -1,8 +1,17 @@
 # Runtime state and private WhatsApp data.
-whatsapp/vendor/whatsapp-mcp/whatsapp-bridge/store/
+whatsapp/build/vendor/whatsapp-mcp/whatsapp-bridge/store/
 *.db
 *.db-shm
 *.db-wal
+
+# The plugin intentionally packages its vendored runtime under build/ so
+# prompt/eval tooling does not treat runtime implementation files as deferred
+# skill documentation.
+build/
+!whatsapp/build/
+!whatsapp/build/vendor/
+!whatsapp/build/vendor/whatsapp-mcp/
+!whatsapp/build/vendor/whatsapp-mcp/**
 
 # Python and Go build artifacts.
 .venv/
@@ -10,7 +19,6 @@ __pycache__/
 *.py[cod]
 bin/
 dist/
-build/
 
 # Logs and temp files.
 *.log

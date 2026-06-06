@@ -1,15 +1,14 @@
 ---
 name: whatsapp
 description: Use when the user wants Codex to search WhatsApp chats, read WhatsApp messages, inspect contacts, download WhatsApp media, send WhatsApp messages/media, create WhatsApp groups, or add participants to WhatsApp groups through this plugin.
-version: 0.1.0
 ---
 
 # WhatsApp MCP Workflow
 
 This plugin wraps `lharries/whatsapp-mcp`, which has two moving parts:
 
-1. A Go WhatsApp bridge in `vendor/whatsapp-mcp/whatsapp-bridge`.
-2. A Python stdio MCP server in `vendor/whatsapp-mcp/whatsapp-mcp-server`.
+1. A Go WhatsApp bridge in `build/vendor/whatsapp-mcp/whatsapp-bridge`.
+2. A Python stdio MCP server in `build/vendor/whatsapp-mcp/whatsapp-mcp-server`.
 
 The MCP server depends on the bridge listening at `http://127.0.0.1:8080/api`.
 
