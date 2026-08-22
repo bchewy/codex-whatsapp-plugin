@@ -23,11 +23,12 @@ This plugin lets your agent search contacts/chats/messages, download media,
 and send WhatsApp messages or files through your personal WhatsApp
 linked-device session.
 
-> Naming note: the GitHub repository is still named `codex-whatsapp-plugin`.
-> The plugin itself is client-neutral; examples below prefer a
-> `whatsapp-agent-plugin` checkout directory name to match the renamed
-> `telegram-agent-plugin` sibling, and call out where the current repo name
-> still applies.
+> Naming note: the GitHub repository is now
+> [`bchewy/whatsapp-agent-plugin`](https://github.com/bchewy/whatsapp-agent-plugin),
+> matching the `telegram-agent-plugin` sibling. Old
+> `codex-whatsapp-plugin` URLs redirect. Local cache/state/store paths keep
+> the `codex-whatsapp-plugin` directory name so existing sessions are not
+> broken.
 
 This project is not affiliated with, endorsed by, or sponsored by WhatsApp,
 Meta, or their affiliates. WhatsApp is a trademark of its respective owner, and
@@ -191,8 +192,7 @@ uses the same model: one `Local Plugins` marketplace, separate `whatsapp` and
 For checkouts under `~/dev`, the relevant `plugins` entries look like this.
 Preserve any other plugins already present in your local marketplace file.
 The `whatsapp` path assumes a `whatsapp-agent-plugin` checkout directory; if
-you cloned this repo under its current GitHub name, use
-`./dev/codex-whatsapp-plugin/whatsapp` instead.
+you cloned into a different directory name, adjust the `path` accordingly.
 
 ```json
 {
@@ -297,7 +297,7 @@ macOS-only today. Two setups are supported:
 ### 1. Clone the repo and pair the bridge (on the Mac)
 
 ```bash
-git clone https://github.com/bchewy/codex-whatsapp-plugin.git whatsapp-agent-plugin
+git clone https://github.com/bchewy/whatsapp-agent-plugin.git
 cd whatsapp-agent-plugin
 bash whatsapp/scripts/check-health.sh
 bash whatsapp/scripts/start-bridge.sh   # scan the QR code on first run

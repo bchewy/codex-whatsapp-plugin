@@ -1,12 +1,12 @@
 {
   "name": "whatsapp",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Use WhatsApp from Codex through an unofficial lharries/whatsapp-mcp bridge wrapper.",
   "author": {
     "name": "Brian Chew"
   },
-  "homepage": "https://github.com/bchewy/codex-whatsapp-plugin",
-  "repository": "https://github.com/bchewy/codex-whatsapp-plugin",
+  "homepage": "https://github.com/bchewy/whatsapp-agent-plugin",
+  "repository": "https://github.com/bchewy/whatsapp-agent-plugin",
   "license": "MIT",
   "keywords": ["whatsapp", "mcp", "messaging"],
   "skills": "./skills/",
@@ -18,9 +18,9 @@
     "developerName": "Brian Chew",
     "category": "Productivity",
     "capabilities": ["Read", "Write"],
-    "websiteURL": "https://github.com/bchewy/codex-whatsapp-plugin",
-    "privacyPolicyURL": "https://github.com/bchewy/codex-whatsapp-plugin/blob/main/whatsapp/PRIVACY.md",
-    "termsOfServiceURL": "https://github.com/bchewy/codex-whatsapp-plugin/blob/main/whatsapp/TERMS.md",
+    "websiteURL": "https://github.com/bchewy/whatsapp-agent-plugin",
+    "privacyPolicyURL": "https://github.com/bchewy/whatsapp-agent-plugin/blob/main/whatsapp/PRIVACY.md",
+    "termsOfServiceURL": "https://github.com/bchewy/whatsapp-agent-plugin/blob/main/whatsapp/TERMS.md",
     "defaultPrompt": [
       "Summarize my recent WhatsApp chats",
       "Find WhatsApp messages from Alice about the launch",
