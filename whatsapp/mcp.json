@@ -1,0 +1,15 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "whatsapp": {
+      "type": "stdio",
+      "command": "bash",
+      "args": ["${PLUGIN_ROOT}/scripts/run-mcp.sh"],
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "UV_PROJECT_ENVIRONMENT": "${PLUGIN_DATA}/uv-env"
+      },
+      "cwd": "${PLUGIN_ROOT}"
+    }
+  }
+}

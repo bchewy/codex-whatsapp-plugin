@@ -1,13 +1,33 @@
-![Codex WhatsApp plugin screenshot](whatsapp/assets/codex-whatsapp-plugin-screenshot.png)
+![WhatsApp Agent Plugin screenshot](whatsapp/assets/codex-whatsapp-plugin-screenshot.png)
 
-# Codex WhatsApp Plugin
+# WhatsApp Agent Plugin
 
-> Platform note: this plugin currently targets macOS only. Windows setup and
-> Windows background-service support are intentionally out of scope for now.
+> Platform note: this plugin currently targets macOS only. The bridge runs as
+> a macOS LaunchAgent, first-time pairing needs a QR scan from a terminal, and
+> the helper scripts assume macOS tooling. Linux and Windows bridge support
+> are intentionally out of scope for now. See
+> [Runtime requirements and platform honesty](#runtime-requirements-and-platform-honesty).
 
-Unofficial third-party Codex plugin wrapper for [`lharries/whatsapp-mcp`](https://github.com/lharries/whatsapp-mcp).
-It lets Codex search contacts/chats/messages, download media, and send WhatsApp
-messages or files through your personal WhatsApp linked-device session.
+Use your personal WhatsApp account from your coding agent, through an
+unofficial third-party wrapper around
+[`lharries/whatsapp-mcp`](https://github.com/lharries/whatsapp-mcp). The same
+`whatsapp/` bundle works in three kinds of clients:
+
+- **Codex** — installed as a plugin from a local marketplace
+- **Grok Bot / Cursor (custom MCP)** — registered as a plain local stdio MCP
+  server on a Mac that runs the bridge
+- **Any Agent Plugins 1.0.0 client** — loaded from the portable `plugin.json`
+  + `mcp.json`
+
+This plugin lets your agent search contacts/chats/messages, download media,
+and send WhatsApp messages or files through your personal WhatsApp
+linked-device session.
+
+> Naming note: the GitHub repository is still named `codex-whatsapp-plugin`.
+> The plugin itself is client-neutral; examples below prefer a
+> `whatsapp-agent-plugin` checkout directory name to match the renamed
+> `telegram-agent-plugin` sibling, and call out where the current repo name
+> still applies.
 
 This project is not affiliated with, endorsed by, or sponsored by WhatsApp,
 Meta, or their affiliates. WhatsApp is a trademark of its respective owner, and
@@ -23,86 +43,52 @@ groups, diagnostics, `--json`, `--events`, `--read-only`, and store-locking
 workflows for scripts and humans. If your main workflow is shell scripting,
 cron, or direct terminal use, a CLI may be the better fit.
 
-This plugin chooses MCP because the primary user is an AI agent inside Codex:
+This plugin chooses MCP because the primary user is an AI agent:
 
-- Codex discovers named WhatsApp tools with schemas instead of learning command
-  strings, flags, shell quoting, and output parsing rules.
+- The agent discovers named WhatsApp tools with schemas instead of learning
+  command strings, flags, shell quoting, and output parsing rules.
 - Contacts, chat JIDs, messages, media paths, and send parameters move through
   structured tool arguments and results.
 - Write actions have an explicit tool boundary: the send tools require
   `confirm_send=true` after the exact recipient and content are confirmed.
-- The Codex plugin manifest, MCP entry, skill, health checks, setup scripts,
+- The plugin manifest, MCP entry, skill, health checks, setup scripts,
   and macOS background service install as one local integration.
 - WhatsApp auth, indexed messages, downloaded media, and the bridge token stay
   in the local private store; data reaches the model only through tool results
   returned for the user's request.
 
 In short: this is not MCP because CLIs are bad. It is MCP because WhatsApp in
-Codex should feel like a typed local capability with explicit write gates, not
-a shell subprocess the agent has to rediscover on every prompt.
+an agent should feel like a typed local capability with explicit write gates,
+not a shell subprocess the agent has to rediscover on every prompt.
 
-## Codex Marketplace Model
+## Runtime requirements and platform honesty
 
-A Codex marketplace is a catalog of plugins. Its `interface.displayName` is the
-dropdown label in Codex, while this plugin's `interface.displayName` is the
-installable item shown inside that marketplace.
+Every client path below depends on the same two processes:
 
-For a single local selector, keep all local plugin entries in one user-level
-marketplace at `~/.agents/plugins/marketplace.json`. Do not keep a repo-local
-`.agents/plugins/marketplace.json` active for this checkout unless you
-intentionally want Codex to show this repository as a separate marketplace.
+1. `whatsapp-bridge`: a Go process that links to WhatsApp as a linked device,
+   syncs messages into SQLite, and exposes `http://127.0.0.1:8080/api`. First
+   pairing requires scanning a QR code from the WhatsApp mobile app, and the
+   background-service install uses a macOS LaunchAgent.
+2. `whatsapp-mcp-server`: a Python stdio MCP server that the client launches
+   via `scripts/run-mcp.sh` and that talks to the bridge over localhost.
 
-This repo's plugin bundle is `whatsapp/`. In the shared `Local Plugins`
-marketplace, the plugin should be installed as:
+That means the MCP server is only useful on a machine that can also run the
+paired bridge — today, a Mac. A Linux host (for example Grok Bot's default
+cloud computer) cannot QR-pair WhatsApp or run the LaunchAgent-based bridge
+service as-is. Until Linux bridge support exists, the honest support matrix
+is:
 
-```bash
-codex plugin add whatsapp@local
-```
-
-The matching Telegram plugin uses the same model: one `Local Plugins`
-marketplace, separate `whatsapp` and `telegram` plugin entries.
-
-For checkouts under `~/dev`, the relevant `plugins` entries look like this.
-Preserve any other plugins already present in your local marketplace file.
-
-```json
-{
-  "name": "local",
-  "interface": {
-    "displayName": "Local Plugins"
-  },
-  "plugins": [
-    {
-      "name": "whatsapp",
-      "source": {
-        "source": "local",
-        "path": "./dev/codex-whatsapp-plugin/whatsapp"
-      },
-      "policy": {
-        "installation": "AVAILABLE",
-        "authentication": "ON_INSTALL"
-      },
-      "category": "Productivity"
-    },
-    {
-      "name": "telegram",
-      "source": {
-        "source": "local",
-        "path": "./dev/codex-telegram-plugin/telegram"
-      },
-      "policy": {
-        "installation": "AVAILABLE",
-        "authentication": "ON_INSTALL"
-      },
-      "category": "Productivity"
-    }
-  ]
-}
-```
+- **Works today**: any client whose MCP stdio subprocess runs on a Mac that
+  has already paired the bridge (Codex on that Mac, Cursor on that Mac, a
+  Grok Bot / agent runtime executing on that Mac).
+- **Packaging-ready, runtime out of scope**: Agent Plugins / Cursor installs
+  on cloud Linux machines. The portable manifests load fine, but the server
+  will not reach a bridge because there is no Linux bridge/pairing story yet.
 
 ## macOS Quick Start
 
-This is the recommended path for a first-time macOS setup.
+This is the recommended path for a first-time macOS setup. It uses Codex as
+the client; the bridge steps (1–3, 5) are identical for every other client.
 
 1. Install the macOS build tools and dependencies:
 
@@ -154,7 +140,8 @@ This is the recommended path for a first-time macOS setup.
    ```
 
    For plugin upgrades, prefer running helper scripts from the installed plugin
-   copy under `~/.codex/plugins/cache/...`; see [Install In Codex](#install-in-codex).
+   copy under `~/.codex/plugins/cache/...`; see
+   [Install the plugin in Codex](#install-the-plugin-in-codex).
 
 If setup fails, run `bash whatsapp/scripts/check-health.sh` again first. The
 most common fixes are installing missing build tools, freeing port `8080`, or
@@ -166,7 +153,7 @@ Paste this into Codex from the repository root if you want an agent to run the
 macOS setup for you:
 
 ```text
-Set up this Codex WhatsApp plugin on this Mac. Please install or verify the
+Set up this WhatsApp agent plugin on this Mac. Please install or verify the
 needed macOS dependencies, run the health check, start the WhatsApp bridge for
 first-time QR pairing if needed, install the local plugin into Codex, then set
 up the macOS background service after pairing works. Do not send any WhatsApp
@@ -174,98 +161,75 @@ messages. Stop and ask me to scan the QR code if WhatsApp needs pairing, then
 verify the bridge/service status and summarize what changed.
 ```
 
-## What It Bundles
+---
 
-The actual Codex plugin bundle is `whatsapp/`, mirroring the layout used by
-`codex-telegram-plugin`. Local marketplace registration lives outside this repo
-in `~/.agents/plugins/marketplace.json`.
+## Using with Codex
 
-- `whatsapp/.codex-plugin/plugin.json`: Codex plugin manifest.
-- `whatsapp/.mcp.json`: Codex MCP server entry for WhatsApp.
-- `whatsapp/assets/icon.svg`: WhatsApp logo used in the composer and plugin UI.
-- `whatsapp/skills/whatsapp/SKILL.md`: workflow guidance for Codex.
-- `whatsapp/scripts/`: setup, health, bridge, and reset helpers.
-- `whatsapp/vendor/whatsapp-mcp/`: vendored upstream WhatsApp bridge and MCP server.
+### Codex marketplace model
 
-The upstream integration is two processes:
+A Codex marketplace is a catalog of plugins. Its `interface.displayName` is the
+dropdown label in Codex, while this plugin's `interface.displayName` is the
+installable item shown inside that marketplace.
 
-1. `whatsapp-bridge`: Go process that links to WhatsApp, syncs messages into SQLite, and exposes `http://127.0.0.1:8080/api`.
-2. `whatsapp-mcp-server`: Python stdio MCP server that Codex starts from `.mcp.json`.
+For a single local selector, keep all local plugin entries in one user-level
+marketplace at `~/.agents/plugins/marketplace.json`. Do not keep a repo-local
+`.agents/plugins/marketplace.json` active for this checkout unless you
+intentionally want Codex to show this repository as a separate marketplace.
 
-Python dependencies are installed by `uv` into
-`${XDG_CACHE_HOME:-$HOME/.cache}/codex-whatsapp-plugin/` so the plugin tree
-stays clean.
-
-## Prerequisites
-
-The macOS quick-start command above installs the normal dependency set. In
-detail, the plugin needs:
-
-- Go 1.25+ or a Go toolchain with automatic toolchain downloads enabled
-- Python 3.11+
-- `uv`
-- WhatsApp mobile app/account for QR pairing
-- C compiler/CGO support for `go-sqlite3`
-- Optional: `ffmpeg` for converting non-Opus audio into WhatsApp voice messages
-
-If you are not using Homebrew, install `uv` directly:
+This repo's plugin bundle is `whatsapp/`. In the shared `Local Plugins`
+marketplace, the plugin should be installed as:
 
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
+codex plugin add whatsapp@local
 ```
 
-## Local Development
+The matching Telegram plugin
+([`bchewy/telegram-agent-plugin`](https://github.com/bchewy/telegram-agent-plugin))
+uses the same model: one `Local Plugins` marketplace, separate `whatsapp` and
+`telegram` plugin entries.
 
-Check setup:
+For checkouts under `~/dev`, the relevant `plugins` entries look like this.
+Preserve any other plugins already present in your local marketplace file.
+The `whatsapp` path assumes a `whatsapp-agent-plugin` checkout directory; if
+you cloned this repo under its current GitHub name, use
+`./dev/codex-whatsapp-plugin/whatsapp` instead.
 
-```bash
-bash whatsapp/scripts/check-health.sh
+```json
+{
+  "name": "local",
+  "interface": {
+    "displayName": "Local Plugins"
+  },
+  "plugins": [
+    {
+      "name": "whatsapp",
+      "source": {
+        "source": "local",
+        "path": "./dev/whatsapp-agent-plugin/whatsapp"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "telegram",
+      "source": {
+        "source": "local",
+        "path": "./dev/telegram-agent-plugin/telegram"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
 ```
 
-Start the WhatsApp bridge:
-
-```bash
-bash whatsapp/scripts/start-bridge.sh
-```
-
-On first run, scan the QR code from WhatsApp:
-`Settings > Linked Devices > Link a Device`.
-
-Keep the bridge terminal open while Codex uses the MCP tools, or install the
-macOS background service below.
-
-### Run The Bridge In The Background
-
-After the first QR pairing succeeds, you can run the bridge as a macOS
-LaunchAgent so you do not need to keep a terminal window open:
-
-```bash
-bash whatsapp/scripts/bridge-service.sh install
-```
-
-Useful service commands:
-
-```bash
-bash whatsapp/scripts/bridge-service.sh status
-bash whatsapp/scripts/bridge-service.sh logs
-bash whatsapp/scripts/bridge-service.sh restart
-bash whatsapp/scripts/bridge-service.sh uninstall
-```
-
-The MCP startup script also tries to auto-start the bridge in the background
-when Codex starts the WhatsApp MCP server. Set `WHATSAPP_BRIDGE_AUTO_START=0`
-to disable that behavior.
-
-Logs are written under:
-
-```text
-${XDG_STATE_HOME:-$HOME/.local/state}/codex-whatsapp-plugin/
-```
-
-If your linked-device session expires and a new QR code is needed, use
-`start-bridge.sh` in a visible terminal or inspect `bridge-service.sh logs`.
-
-## Install In Codex
+### Install the plugin in Codex
 
 After the shared local marketplace includes this checkout:
 
@@ -308,6 +272,267 @@ bash "$PLUGIN_ROOT/scripts/bridge-service.sh" install
 If `PLUGIN_ROOT` is empty, install the plugin from the local marketplace first.
 Runtime state still lives in the shared external store documented below, so
 upgrades do not wipe your linked-device session.
+
+---
+
+## Using with Grok Bot / Cursor (custom MCP, stdio)
+
+The bundled server is a normal local stdio MCP server, so any client that
+supports custom MCP servers (Grok Bot, Cursor, Claude Desktop, etc.) can use
+it directly — no Codex plugin machinery required.
+
+**Read this first:** unlike the Telegram sibling plugin, this server cannot
+run usefully on a generic Linux box. The MCP server only proxies a local
+WhatsApp bridge, and the bridge (QR pairing, LaunchAgent service) is
+macOS-only today. Two setups are supported:
+
+1. **Client and server on the same Mac** (Cursor on your Mac, a Grok Bot /
+   agent runtime executing on your Mac): works today, instructions below.
+2. **Cloud Linux client machines** (for example Grok Bot's default computer):
+   the packaging is ready — the portable manifests install fine — but the
+   full runtime is out of scope until Linux bridge support exists. The Linux
+   box cannot QR-pair WhatsApp or run the macOS bridge service, so MCP tool
+   calls will fail to reach a bridge. Do not expect this path to work yet.
+
+### 1. Clone the repo and pair the bridge (on the Mac)
+
+```bash
+git clone https://github.com/bchewy/codex-whatsapp-plugin.git whatsapp-agent-plugin
+cd whatsapp-agent-plugin
+bash whatsapp/scripts/check-health.sh
+bash whatsapp/scripts/start-bridge.sh   # scan the QR code on first run
+```
+
+After the first pairing works, optionally install the background service so
+the bridge survives without a terminal window:
+
+```bash
+bash whatsapp/scripts/bridge-service.sh install
+```
+
+### 2. Register the custom MCP server
+
+Add a local **stdio** MCP server in your client with:
+
+- **command**: `bash`
+- **args**: `/absolute/path/to/whatsapp-agent-plugin/whatsapp/scripts/run-mcp.sh`
+- **env** (optional):
+  - `PYTHONUNBUFFERED=1` — recommended so server logs stream promptly
+  - `WHATSAPP_BRIDGE_AUTO_START=0` — only if you manage the bridge yourself
+    and do not want the MCP startup script to auto-start it
+  - `WHATSAPP_BRIDGE_PORT` — only if the bridge runs on a non-default port
+
+No WhatsApp credentials go in the MCP env. Auth lives in the local
+linked-device store created during QR pairing.
+
+In JSON-config clients (for example Cursor's `mcp.json`), the equivalent entry
+looks like:
+
+```json
+{
+  "mcpServers": {
+    "whatsapp": {
+      "command": "bash",
+      "args": [
+        "/absolute/path/to/whatsapp-agent-plugin/whatsapp/scripts/run-mcp.sh"
+      ],
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      }
+    }
+  }
+}
+```
+
+Use an absolute path to `run-mcp.sh`. Custom MCP servers are often spawned
+with an unrelated working directory, so relative paths break. The script
+locates the plugin bundle from its own path, so no `cwd` is required.
+
+### 3. Verify
+
+From the shell on the Mac:
+
+```bash
+bash whatsapp/scripts/check-health.sh
+```
+
+From the agent, in a fresh conversation, ask it to call `search_contacts` or
+`list_chats`. You should see data from your own WhatsApp account. Start a
+fresh thread after adding the MCP server; most clients only load new servers
+into new sessions.
+
+### Troubleshooting custom MCP setups
+
+- **Tools error with connection failures**: the bridge is not running or not
+  paired. Run `bash whatsapp/scripts/start-bridge.sh` in a visible terminal
+  and scan the QR code if prompted.
+- **Server registered but tools don't show up**: start a fresh thread /
+  conversation after adding the MCP server.
+- **First launch is slow**: `uv` resolves and builds the Python virtualenv on
+  first run. If your client enforces a short startup timeout, run
+  `bash whatsapp/scripts/check-health.sh` once beforehand — Codex's own config
+  allows 60s for this reason.
+- **Running the client on Linux**: not supported yet; see the platform
+  honesty note above.
+
+---
+
+## Using with Agent Plugins clients
+
+The installable package is the `whatsapp/` directory. It ships two manifest
+sets side by side, so the same directory loads in Codex and in any client that
+implements the portable [Agent Plugins 1.0.0](https://agent-plugins.org/specification)
+format:
+
+| File | Consumer | Purpose |
+| --- | --- | --- |
+| `plugin.json` | Agent Plugins clients | Portable manifest (`$schema` = `https://agent-plugins.org/schemas/1.0.0/plugin.schema.json`, closed field set) |
+| `mcp.json` | Agent Plugins clients | Portable MCP config (`stdio` server launched via `bash`, `${PLUGIN_ROOT}`/`${PLUGIN_DATA}` placeholders) |
+| `skills/<name>/SKILL.md` | Both | Agent Skills, discovered as immediate children of `skills/` by both formats |
+| `.codex-plugin/plugin.json` | Codex | Codex-native manifest, including marketplace `interface` metadata (display name, logo, screenshots, prompts) |
+| `.mcp.json` | Codex | Codex-native MCP config, including Codex-only fields (`startup_timeout_sec`, `tool_timeout_sec`) |
+
+Notes on the split:
+
+- Codex does not currently document an Agent Plugins `extensions` namespace,
+  so its UI/marketplace metadata stays in `.codex-plugin/plugin.json` instead
+  of being duplicated under an invented `extensions` key. If Codex publishes a
+  reverse-domain namespace later, that metadata can move into the portable
+  manifest's `extensions` field.
+- The portable `mcp.json` declares no secret values. WhatsApp auth comes from
+  the one-time QR pairing and lives in the local private store, not in the
+  package or the MCP environment.
+- The portable config sets `UV_PROJECT_ENVIRONMENT=${PLUGIN_DATA}/uv-env` so
+  `uv` builds the Python virtualenv in the client-managed writable data
+  directory instead of inside the (possibly read-only) installed package.
+  `run-mcp.sh` respects an existing `UV_PROJECT_ENVIRONMENT` and only falls
+  back to its own cache location when unset (the Codex path).
+- Shared metadata (`name`, `version`, `author`, `homepage`, `repository`,
+  `license`, `keywords`) must stay identical across `plugin.json` and
+  `.codex-plugin/plugin.json`, and the two MCP configs must launch the same
+  server command. The test suite enforces this
+  (`tests/whatsapp_plugin/test_plugin_structure.py`), and also validates the
+  portable files against the vendored Agent Plugins 1.0.0 schemas.
+- Runtime constraint applies here too: an Agent Plugins client can load this
+  package anywhere, but the MCP server only produces useful results on a Mac
+  with a paired bridge. See the platform honesty section above.
+
+An Agent Plugins client loads the package by reading root `plugin.json`,
+discovering skills under `skills/`, and starting `whatsapp` from root
+`mcp.json`. Codex keeps using `.codex-plugin/plugin.json` and `.mcp.json`
+exactly as before; nothing about the Codex install flow changed.
+
+---
+
+## What It Bundles
+
+The actual plugin bundle is `whatsapp/`, mirroring the layout used by
+[`telegram-agent-plugin`](https://github.com/bchewy/telegram-agent-plugin).
+Local marketplace registration lives outside this repo in
+`~/.agents/plugins/marketplace.json`.
+
+- `whatsapp/plugin.json`: portable Agent Plugins 1.0.0 manifest.
+- `whatsapp/mcp.json`: portable Agent Plugins 1.0.0 MCP server declaration.
+- `whatsapp/.codex-plugin/plugin.json`: Codex plugin manifest.
+- `whatsapp/.mcp.json`: Codex MCP server entry for WhatsApp.
+- `whatsapp/assets/icon.svg`: WhatsApp logo used in the composer and plugin UI.
+- `whatsapp/skills/whatsapp/SKILL.md`: workflow guidance for the agent.
+- `whatsapp/scripts/`: setup, health, bridge, and reset helpers.
+- `whatsapp/build/vendor/whatsapp-mcp/`: vendored upstream WhatsApp bridge and
+  MCP server.
+- `tests/whatsapp_plugin/`: structure tests that validate the portable
+  manifests against the vendored Agent Plugins schemas and keep the Codex and
+  portable files in sync.
+
+The upstream integration is two processes:
+
+1. `whatsapp-bridge`: Go process that links to WhatsApp, syncs messages into SQLite, and exposes `http://127.0.0.1:8080/api`.
+2. `whatsapp-mcp-server`: Python stdio MCP server that the client starts via `scripts/run-mcp.sh`.
+
+Python dependencies are installed by `uv` into
+`${XDG_CACHE_HOME:-$HOME/.cache}/codex-whatsapp-plugin/` so the plugin tree
+stays clean (Agent Plugins clients override this to `${PLUGIN_DATA}/uv-env`).
+
+## Prerequisites
+
+The macOS quick-start command above installs the normal dependency set. In
+detail, the plugin needs:
+
+- macOS (see the platform note at the top)
+- Go 1.25+ or a Go toolchain with automatic toolchain downloads enabled
+- Python 3.11+
+- `uv`
+- WhatsApp mobile app/account for QR pairing
+- C compiler/CGO support for `go-sqlite3`
+- Optional: `ffmpeg` for converting non-Opus audio into WhatsApp voice messages
+
+If you are not using Homebrew, install `uv` directly:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+## Local Development
+
+Check setup:
+
+```bash
+bash whatsapp/scripts/check-health.sh
+```
+
+Start the WhatsApp bridge:
+
+```bash
+bash whatsapp/scripts/start-bridge.sh
+```
+
+On first run, scan the QR code from WhatsApp:
+`Settings > Linked Devices > Link a Device`.
+
+Keep the bridge terminal open while the agent uses the MCP tools, or install
+the macOS background service below.
+
+### Run The Bridge In The Background
+
+After the first QR pairing succeeds, you can run the bridge as a macOS
+LaunchAgent so you do not need to keep a terminal window open:
+
+```bash
+bash whatsapp/scripts/bridge-service.sh install
+```
+
+Useful service commands:
+
+```bash
+bash whatsapp/scripts/bridge-service.sh status
+bash whatsapp/scripts/bridge-service.sh logs
+bash whatsapp/scripts/bridge-service.sh restart
+bash whatsapp/scripts/bridge-service.sh uninstall
+```
+
+The MCP startup script also tries to auto-start the bridge in the background
+when the client starts the WhatsApp MCP server. Set
+`WHATSAPP_BRIDGE_AUTO_START=0` to disable that behavior.
+
+Logs are written under:
+
+```text
+${XDG_STATE_HOME:-$HOME/.local/state}/codex-whatsapp-plugin/
+```
+
+If your linked-device session expires and a new QR code is needed, use
+`start-bridge.sh` in a visible terminal or inspect `bridge-service.sh logs`.
+
+### Run the structure tests
+
+The repo ships structural conformance tests for the plugin bundle: the
+portable `plugin.json`/`mcp.json` are validated against the vendored
+Agent Plugins 1.0.0 schemas, skills discovery is checked, and the Codex and
+portable manifests are kept in sync. Run them from the repository root:
+
+```bash
+uv run --no-project --with pytest --with jsonschema pytest tests
+```
 
 ## Tools
 
@@ -410,7 +635,7 @@ Both the bridge and the MCP server respect:
 
 This repository's wrapper code is MIT licensed. The vendored upstream project
 is MIT licensed by Luke Harries; see `NOTICE.md` and
-`whatsapp/vendor/whatsapp-mcp/LICENSE`.
+`whatsapp/build/vendor/whatsapp-mcp/LICENSE`.
 
 Runtime dependencies keep their own licenses. This source release includes Go
 and Python dependency manifests; if you distribute built bridge binaries, review
