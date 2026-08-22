@@ -1,13 +1,13 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "whatsapp",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Personal WhatsApp account tools over MCP: search contacts/chats/messages, download media, and send messages through a local linked-device bridge (wrapper around lharries/whatsapp-mcp).",
   "author": {
     "name": "Brian Chew"
   },
-  "homepage": "https://github.com/bchewy/codex-whatsapp-plugin",
-  "repository": "https://github.com/bchewy/codex-whatsapp-plugin",
+  "homepage": "https://github.com/bchewy/whatsapp-agent-plugin",
+  "repository": "https://github.com/bchewy/whatsapp-agent-plugin",
   "license": "MIT",
   "keywords": ["whatsapp", "mcp", "messaging"]
 }
